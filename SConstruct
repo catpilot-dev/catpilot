@@ -32,9 +32,9 @@ if platform.system() == "Darwin":
   brew_prefix = subprocess.check_output(['brew', '--prefix'], encoding='utf8').strip()
 elif arch == "aarch64" and os.path.isfile('/TICI'):
   arch = "larch64"
-elif arch == "aarch64" and os.path.exists('/proc/device-tree/model'):
-  with open('/proc/device-tree/model') as f:
-    if 'RK3588' in f.read().upper():
+elif arch == "aarch64" and os.path.exists('/proc/device-tree/compatible'):
+  with open('/proc/device-tree/compatible') as f:
+    if 'rk3588' in f.read():
       arch = "rk3588"
 assert arch in [
   "larch64",  # linux tici arm64

@@ -10,8 +10,8 @@ AGNOS = os.path.isfile('/AGNOS')
 
 def _detect_rk3588() -> bool:
   try:
-    with open('/proc/device-tree/model') as f:
-      return 'RK3588' in f.read().upper()
+    with open('/proc/device-tree/compatible') as f:
+      return 'rk3588' in f.read()
   except FileNotFoundError:
     return False
 
