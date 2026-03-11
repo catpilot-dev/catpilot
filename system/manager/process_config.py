@@ -66,7 +66,7 @@ procs = [
 
   NativeProcess("loggerd", "system/loggerd", ["./loggerd"], logging),
   NativeProcess("encoderd", "system/loggerd", ["./encoderd"], only_onroad),
-  NativeProcess("stream_encoderd", "system/loggerd", ["./encoderd", "--stream"], notcar),
+  NativeProcess("stream_encoderd", "system/loggerd", ["./encoderd", "--stream"], notcar if not RK3588 else only_onroad),
   PythonProcess("logmessaged", "system.logmessaged", always_run),
 
   NativeProcess("camerad", "system/camerad", ["./camerad"], driverview, enabled=not WEBCAM),
@@ -80,7 +80,7 @@ procs = [
   PythonProcess("dmonitoringmodeld", "selfdrive.modeld.dmonitoringmodeld", driverview, enabled=(WEBCAM or not PC)),
 
   PythonProcess("sensord", "system.sensord.sensord", only_onroad, enabled=not PC),
-  PythonProcess("ui", "selfdrive.ui.ui", always_run, restart_if_crash=True),
+  PythonProcess("ui", "selfdrive.ui.ui", always_run, restart_if_crash=True, enabled=not RK3588),
   PythonProcess("soundd", "selfdrive.ui.soundd", driverview),
   PythonProcess("locationd", "selfdrive.locationd.locationd", only_onroad),
   NativeProcess("_pandad", "selfdrive/pandad", ["./pandad"], always_run, enabled=False),
@@ -111,8 +111,8 @@ procs = [
 
   # debug procs
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
-  PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar),
-  PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
+  PythonProcess("webrtcd", "system.webrtc.webrtcd", notcar if not RK3588 else always_run),
+  PythonProcess("webjoystick", "tools.bodyteleop.web", notcar if not RK3588 else always_run),
   PythonProcess("joystick", "tools.joystick.joystick_control", and_(joystick, iscar)),
 ]
 
