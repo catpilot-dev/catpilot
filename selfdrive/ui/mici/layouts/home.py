@@ -43,7 +43,7 @@ class DeviceStatus(Widget):
     self._version_text = self._get_version_text()
 
   def _get_version_text(self) -> str:
-    brand = "openpilot"
+    brand = "catpilot"
     description = ui_state.params.get("UpdaterCurrentDescription")
     return f"{brand} {description}" if description else brand
 

@@ -1,5 +1,70 @@
 <div align="center" style="text-align: center;">
 
+<h1>catpilot</h1>
+
+<p>
+  <b>A lightweight plugin framework for <a href="https://github.com/commaai/openpilot">openpilot</a>.</b>
+  <br>
+  Extend your comma device with plugins — no fork maintenance required.
+</p>
+
+<h3>
+  <a href="https://catpilot.dev">Website</a>
+  <span> · </span>
+  <a href="https://github.com/catpilot-dev/plugins">Plugins</a>
+  <span> · </span>
+  <a href="https://github.com/catpilot-dev/connect">Connect on Device</a>
+</h3>
+
+Install: `installer.comma.ai/catpilot-dev/catpilot`
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+## What is catpilot?
+
+catpilot is stock openpilot with a thin plugin layer on top. The openpilot code you know is untouched — catpilot only adds hook points that let plugins extend behavior at runtime.
+
+**What's different from stock openpilot:**
+- `selfdrive/plugins/` — plugin runtime (hook dispatch, registry, manifest loader)
+- `cereal/custom.capnp` — schema extensions for plugin data
+- That's it. Everything else is upstream openpilot.
+
+**What plugins can do:**
+- Adjust cruise speed for curves, speed limits, or map data
+- Add car-specific support (BMW, etc.) without forking opendbc/panda
+- Customize the on-device UI overlay
+- Manage device compatibility patches (e.g., Comma 3 on newer openpilot)
+
+**Companion projects:**
+- [catpilot-dev/plugins](https://github.com/catpilot-dev/plugins) — plugin packages and installer
+- [catpilot-dev/connect](https://github.com/catpilot-dev/connect) — on-device web UI for route browsing, dashcam, telemetry, and plugin management
+
+## Supported Devices
+
+| Device | Panda | Status |
+|--------|-------|--------|
+| **comma three** (2021) | STM32F4 | Community supported* |
+| [comma 3X](https://github.com/commaai/hardware/tree/master/comma_3X) (2023) | STM32H7 | Supported |
+| [comma four](https://github.com/commaai/hardware/tree/master/comma_four) (2025) | STM32H7 | Supported |
+
+*\* comma three support enabled by [c3_compat](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) plugin.*
+
+## Installation URL
+
+```
+installer.comma.ai/catpilot-dev/catpilot
+```
+
+On first boot, catpilot automatically sets up plugins and connect on device.
+
+---
+
+## Upstream openpilot README
+
+<div align="center" style="text-align: center;">
+
 <h1>openpilot</h1>
 
 <p>
@@ -48,18 +113,6 @@ To use openpilot in a car, you need four things:
 4. **Car Harness:** You will also need a [car harness](https://comma.ai/shop/car-harness) to connect your comma 3X to your car.
 
 We have detailed instructions for [how to install the harness and device in a car](https://comma.ai/setup). Note that it's possible to run openpilot on [other hardware](https://blog.comma.ai/self-driving-car-for-free/), although it's not plug-and-play.
-
-
-### Branches
-
-Running `master` and other branches directly is supported, but it's recommended to run one of the following prebuilt branches:
-
-| comma four branch      | comma 3X branch        | URL                                    | description                                                                         |
-|------------------------|------------------------|----------------------------------------|-------------------------------------------------------------------------------------|
-| `release-mici`         | `release-tizi`         | openpilot.comma.ai                     | This is openpilot's release branch.                                                 |
-| `release-mici-staging` | `release-tizi-staging` | openpilot-test.comma.ai                | This is the staging branch for releases. Use it to get new releases slightly early. |
-| `nightly`              | `nightly`              | openpilot-nightly.comma.ai             | This is the bleeding edge development branch. Do not expect this to be stable.      |
-| `nightly-dev`          | `nightly-dev`          | installer.comma.ai/commaai/nightly-dev | Same as nightly, but includes experimental development features for some cars.      |
 
 To start developing openpilot
 ------
