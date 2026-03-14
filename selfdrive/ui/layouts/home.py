@@ -6,7 +6,6 @@ from openpilot.common.params import Params
 from openpilot.selfdrive.ui.widgets.offroad_alerts import UpdateAlert, OffroadAlert
 from openpilot.selfdrive.ui.widgets.exp_mode_button import ExperimentalModeButton
 from openpilot.selfdrive.ui.widgets.prime import PrimeWidget
-from openpilot.selfdrive.ui.widgets.setup import SetupWidget
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
 from openpilot.system.ui.lib.multilang import tr, trn
@@ -19,6 +18,10 @@ CONTENT_MARGIN = 40
 SPACING = 25
 RIGHT_COLUMN_WIDTH = 750
 REFRESH_INTERVAL = 10.0
+
+# Green badge for ecosystem updates (plugins, COD, models, mapd)
+BADGE_COLOR = rl.Color(76, 175, 80, 255)
+BADGE_FONT_SIZE = 32
 
 
 class HomeLayoutState(IntEnum):
@@ -40,12 +43,15 @@ class HomeLayout(Widget):
     self.current_state = HomeLayoutState.HOME
     self.last_refresh = 0
     self.settings_callback: callable | None = None
+    self.plugins_callback: callable | None = None
 
     self.update_available = False
     self.alert_count = 0
+    self.eco_update_count = 0
     self._version_text = ""
     self._prev_update_available = False
     self._prev_alerts_present = False
+    self._eco_update_checker: callable | None = None
 
     self.header_rect = rl.Rectangle(0, 0, 0, 0)
     self.content_rect = rl.Rectangle(0, 0, 0, 0)
@@ -54,15 +60,28 @@ class HomeLayout(Widget):
 
     self.update_notif_rect = rl.Rectangle(0, 0, 200, HEADER_HEIGHT - 10)
     self.alert_notif_rect = rl.Rectangle(0, 0, 220, HEADER_HEIGHT - 10)
+    self.eco_badge_rect = rl.Rectangle(0, 0, 60, 60)
 
     self._prime_widget = PrimeWidget()
-    self._setup_widget = SetupWidget()
+    self._left_widget = self._prime_widget
+    self._right_widget = None  # plugins can set via set_right_widget()
 
     self._exp_mode_button = ExperimentalModeButton()
     self._setup_callbacks()
 
+    # Plugin hook: let plugins customize the home layout
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.home_extend', None, self)
+    except ImportError:
+      pass
+
   def show_event(self):
     self._exp_mode_button.show_event()
+    if self._left_widget:
+      self._left_widget.show_event()
+    if self._right_widget:
+      self._right_widget.show_event()
     self.last_refresh = time.monotonic()
     self._refresh()
 
@@ -70,6 +89,18 @@ class HomeLayout(Widget):
     self.update_alert.set_dismiss_callback(lambda: self._set_state(HomeLayoutState.HOME))
     self.offroad_alert.set_dismiss_callback(lambda: self._set_state(HomeLayoutState.HOME))
     self._exp_mode_button.set_click_callback(lambda: self.settings_callback() if self.settings_callback else None)
+
+  def set_left_widget(self, widget):
+    self._left_widget = widget
+
+  def set_right_widget(self, widget):
+    self._right_widget = widget
+
+  def set_plugins_callback(self, callback: Callable):
+    self.plugins_callback = callback
+
+  def set_eco_update_checker(self, checker):
+    self._eco_update_checker = checker
 
   def set_settings_callback(self, callback: Callable):
     self.settings_callback = callback
@@ -130,6 +161,15 @@ class HomeLayout(Widget):
     self.alert_notif_rect.x = notif_x
     self.alert_notif_rect.y = self.header_rect.y + (self.header_rect.height - 60) // 2
 
+    # Eco badge: positioned after alert button (or update button, or at the start)
+    eco_x = self.header_rect.x
+    if self.update_available:
+      eco_x += 220
+    if self.alert_count > 0:
+      eco_x += 240
+    self.eco_badge_rect.x = eco_x
+    self.eco_badge_rect.y = self.header_rect.y + (self.header_rect.height - 60) // 2
+
   def _handle_mouse_release(self, mouse_pos: MousePos):
     super()._handle_mouse_release(mouse_pos)
 
@@ -137,6 +177,9 @@ class HomeLayout(Widget):
       self._set_state(HomeLayoutState.UPDATE)
     elif self.alert_count > 0 and rl.check_collision_point_rec(mouse_pos, self.alert_notif_rect):
       self._set_state(HomeLayoutState.ALERTS)
+    elif self.eco_update_count > 0 and rl.check_collision_point_rec(mouse_pos, self.eco_badge_rect):
+      if self.plugins_callback:
+        self.plugins_callback()
 
   def _render_header(self):
     font = gui_app.font(FontWeight.MEDIUM)
@@ -171,8 +214,22 @@ class HomeLayout(Widget):
       text_y = self.alert_notif_rect.y + (self.alert_notif_rect.height - text_size.y) // 2
       rl.draw_text_ex(font, alert_text, rl.Vector2(int(text_x), int(text_y)), HEAD_BUTTON_FONT_SIZE, 0, rl.WHITE)
 
+    # Ecosystem update badge (green circle with count)
+    if self.eco_update_count > 0:
+      version_text_width -= self.eco_badge_rect.width + SPACING // 2
+
+      badge_cx = self.eco_badge_rect.x + self.eco_badge_rect.width // 2
+      badge_cy = self.eco_badge_rect.y + self.eco_badge_rect.height // 2
+      rl.draw_circle(int(badge_cx), int(badge_cy), self.eco_badge_rect.width // 2, BADGE_COLOR)
+
+      badge_text = str(self.eco_update_count)
+      text_size = measure_text_cached(font, badge_text, BADGE_FONT_SIZE)
+      text_x = badge_cx - text_size.x // 2
+      text_y = badge_cy - text_size.y // 2
+      rl.draw_text_ex(font, badge_text, rl.Vector2(int(text_x), int(text_y)), BADGE_FONT_SIZE, 0, rl.WHITE)
+
     # Version text (right aligned)
-    if self.update_available or self.alert_count > 0:
+    if self.update_available or self.alert_count > 0 or self.eco_update_count > 0:
       version_text_width -= SPACING * 1.5
 
     version_rect = rl.Rectangle(self.header_rect.x + self.header_rect.width - version_text_width, self.header_rect.y,
@@ -190,7 +247,8 @@ class HomeLayout(Widget):
     self.offroad_alert.render(self.content_rect)
 
   def _render_left_column(self):
-    self._prime_widget.render(self.left_column_rect)
+    if self._left_widget:
+      self._left_widget.render(self.left_column_rect)
 
   def _render_right_column(self):
     exp_height = 125
@@ -199,19 +257,26 @@ class HomeLayout(Widget):
     )
     self._exp_mode_button.render(exp_rect)
 
-    setup_rect = rl.Rectangle(
-      self.right_column_rect.x,
-      self.right_column_rect.y + exp_height + SPACING,
-      self.right_column_rect.width,
-      self.right_column_rect.height - exp_height - SPACING,
-    )
-    self._setup_widget.render(setup_rect)
+    if self._right_widget:
+      widget_rect = rl.Rectangle(
+        self.right_column_rect.x,
+        self.right_column_rect.y + exp_height + SPACING,
+        self.right_column_rect.width,
+        self.right_column_rect.height - exp_height - SPACING,
+      )
+      self._right_widget.render(widget_rect)
 
   def _refresh(self):
     self._version_text = self._get_version_text()
     update_available = self.update_alert.refresh()
     alert_count = self.offroad_alert.refresh()
     alerts_present = alert_count > 0
+
+    if self._eco_update_checker:
+      try:
+        self.eco_update_count = self._eco_update_checker()
+      except Exception:
+        self.eco_update_count = 0
 
     # Show panels on transition from no alert/update to any alerts/update
     if not update_available and not alerts_present:
@@ -227,6 +292,6 @@ class HomeLayout(Widget):
     self._prev_alerts_present = alerts_present
 
   def _get_version_text(self) -> str:
-    brand = "openpilot"
+    brand = "catpilot"
     description = self.params.get("UpdaterCurrentDescription")
     return f"{brand} {description}" if description else brand
