@@ -270,7 +270,7 @@ class GuiApplication:
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
 
-      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
+      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD or not PC
       if self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if needs_render_texture:
@@ -519,6 +519,12 @@ class GuiApplication:
 
         if self._grid_size > 0:
           self._draw_grid()
+
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.pre_end_drawing', None)
+        except ImportError:
+          pass
 
         rl.end_drawing()
 
