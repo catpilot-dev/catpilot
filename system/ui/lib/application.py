@@ -39,7 +39,10 @@ GRID_SIZE = int(os.getenv("GRID", "0"))
 PROFILE_RENDER = int(os.getenv("PROFILE_RENDER", "0"))
 PROFILE_STATS = int(os.getenv("PROFILE_STATS", "100"))  # Number of functions to show in profile output
 RECORD = os.getenv("RECORD") == "1"
-RECORD_OUTPUT = str(Path(os.getenv("RECORD_OUTPUT", "output")).with_suffix(".mp4"))
+RECORD_HLS = os.getenv("RECORD_HLS") == "1"
+RECORD_OUTPUT = os.getenv("RECORD_OUTPUT", "output.mp4")
+if not RECORD_HLS:
+  RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
 
 GL_VERSION = """
 #version 300 es
@@ -291,9 +294,19 @@ class GuiApplication:
           '-c:v', 'libx264',        # Video codec
           '-preset', 'ultrafast',   # Encoding speed
           '-y',                     # Overwrite existing file
-          '-f', 'mp4',              # Output format
-          RECORD_OUTPUT,            # Output file path
         ]
+        if RECORD_HLS:
+          hls_time = os.getenv("RECORD_HLS_TIME", "2")
+          hls_list_size = os.getenv("RECORD_HLS_LIST_SIZE", "10")
+          ffmpeg_args += [
+            '-f', 'hls',
+            '-hls_time', hls_time,
+            '-hls_list_size', hls_list_size,
+            '-hls_flags', 'delete_segments',
+            RECORD_OUTPUT,
+          ]
+        else:
+          ffmpeg_args += ['-f', 'mp4', RECORD_OUTPUT]
         self._ffmpeg_proc = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
 
       rl.set_target_fps(fps)
