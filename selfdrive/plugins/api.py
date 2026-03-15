@@ -181,34 +181,41 @@ def _list_available_plugins() -> list[dict]:
   return []
 
 
+def _plugin_data_dir(info) -> str:
+  """Return the plugin's data directory path."""
+  return os.path.join(info.plugin_dir, 'data')
+
+
 def _get_plugin_config(info) -> dict:
-  """Get current config values for a plugin."""
-  from openpilot.common.params import Params
-  params = Params()
+  """Get current config values from plugin data dir.
+
+  Plugin params are stored at <plugin_dir>/data/<key>, NOT in openpilot's
+  Params (/data/params/d/) — those get wiped by Params::clearAll on boot.
+  """
+  data_dir = _plugin_data_dir(info)
   config = {}
   for key, schema in info.manifest.get('params', {}).items():
-    val = params.get(key)
-    if val is not None:
-      try:
-        config[key] = val.decode() if isinstance(val, bytes) else val
-      except (UnicodeDecodeError, AttributeError):
-        config[key] = schema.get('default')
-    else:
+    param_file = os.path.join(data_dir, key)
+    try:
+      raw = open(param_file).read().strip()
+      config[key] = raw
+    except (FileNotFoundError, OSError):
       config[key] = schema.get('default')
   return config
 
 
 def _update_plugin_config(info, updates: dict):
-  """Update config values for a plugin."""
-  from openpilot.common.params import Params
-  params = Params()
+  """Update config values in plugin data dir."""
+  data_dir = _plugin_data_dir(info)
+  os.makedirs(data_dir, exist_ok=True)
   valid_keys = set(info.manifest.get('params', {}).keys())
   for key, value in updates.items():
     if key in valid_keys:
+      param_file = os.path.join(data_dir, key)
       if isinstance(value, bool):
-        params.put_bool(key, value)
+        open(param_file, 'w').write("1" if value else "0")
       else:
-        params.put(key, str(value))
+        open(param_file, 'w').write(str(value))
 
 
 def start_api_server():
