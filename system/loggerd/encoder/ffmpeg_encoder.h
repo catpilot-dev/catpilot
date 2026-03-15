@@ -26,6 +26,7 @@ private:
   int segment_num = -1;
   int counter = 0;
   bool is_open = false;
+  bool hw_encoder = false;
 
   AVCodecContext *codec_ctx;
   AVFrame *frame = NULL;
