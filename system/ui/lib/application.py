@@ -44,8 +44,9 @@ RECORD_OUTPUT = os.getenv("RECORD_OUTPUT", "output.mp4")
 RECORD_SKIP = int(os.getenv("RECORD_SKIP", "0"))  # Skip N frames between captures (0=capture every frame)
 RECORD_CODEC = os.getenv("RECORD_CODEC", "libx264")  # Video codec (libx264, h264_v4l2m2m, etc.)
 RECORD_FRAG_MP4 = os.getenv("RECORD_FRAG_MP4") == "1"  # Fragmented MP4 output (for streaming)
+RECORD_RAW = os.getenv("RECORD_RAW") == "1"  # Raw YUV420p output (no encoding, for WebRTC)
 RECORD_VF = os.getenv("RECORD_VF", "")  # Extra video filters (e.g. "scale=1080:540" for downscale)
-if not RECORD_HLS and not RECORD_FRAG_MP4:
+if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
   RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
 
 GL_VERSION = """
@@ -297,13 +298,17 @@ class GuiApplication:
           '-r', str(capture_fps),   # Input frame rate (effective after skip)
           '-i', 'pipe:0',           # Input from stdin
           '-vf', f'vflip,{RECORD_VF + "," if RECORD_VF else ""}format=yuv420p',
-          '-c:v', RECORD_CODEC,     # Video codec (libx264, h264_v4l2m2m, etc.)
         ]
-        if RECORD_CODEC == 'libx264':
-          ffmpeg_args += ['-preset', 'ultrafast']
+        if not RECORD_RAW:
+          ffmpeg_args += ['-c:v', RECORD_CODEC]  # Video codec (libx264, h264_v4l2m2m, etc.)
+          if RECORD_CODEC == 'libx264':
+            ffmpeg_args += ['-preset', 'ultrafast']
         ffmpeg_args += ['-y']       # Overwrite existing file
 
-        if RECORD_HLS:
+        if RECORD_RAW:
+          # Raw YUV420p output — no encoding, for WebRTC (aiortc encodes)
+          ffmpeg_args += ['-f', 'rawvideo', '-pix_fmt', 'yuv420p', RECORD_OUTPUT]
+        elif RECORD_HLS:
           hls_time = os.getenv("RECORD_HLS_TIME", "2")
           hls_list_size = os.getenv("RECORD_HLS_LIST_SIZE", "10")
           ffmpeg_args += [
