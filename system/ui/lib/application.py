@@ -45,7 +45,7 @@ RECORD_SKIP = int(os.getenv("RECORD_SKIP", "0"))  # Skip N frames between captur
 RECORD_CODEC = os.getenv("RECORD_CODEC", "libx264")  # Video codec (libx264, h264_v4l2m2m, etc.)
 RECORD_FRAG_MP4 = os.getenv("RECORD_FRAG_MP4") == "1"  # Fragmented MP4 output (for streaming)
 RECORD_VF = os.getenv("RECORD_VF", "")  # Extra video filters (e.g. "scale=1080:540" for downscale)
-if not RECORD_HLS:
+if not RECORD_HLS and not RECORD_FRAG_MP4:
   RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
 
 GL_VERSION = """
