@@ -38,6 +38,12 @@ STREAM_FPS = UI_FPS // (int(os.getenv("STREAM_UI_SKIP", "1")) + 1)  # matches ap
 OUT_W = int(os.getenv("STREAM_UI_W", "1080"))
 OUT_H = int(os.getenv("STREAM_UI_H", "540"))
 
+# If STREAM_UI_W/H are set, application.py pre-scales before writing to FIFO —
+# ffmpeg reads at output dimensions and no scale step is needed.
+_pre_scaled = bool(os.getenv("STREAM_UI_W")) and bool(os.getenv("STREAM_UI_H"))
+FIFO_W = OUT_W if _pre_scaled else UI_W
+FIFO_H = OUT_H if _pre_scaled else UI_H
+
 # libx264: h264_v4l2m2m is not accessible via ffmpeg on TICI (Qualcomm-specific ioctl path)
 H264_ENCODER = "libx264"
 
@@ -68,10 +74,10 @@ def build_ffmpeg_cmd() -> list[str]:
     "-v", "warning",
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
-    "-s", f"{UI_W}x{UI_H}",
+    "-s", f"{FIFO_W}x{FIFO_H}",
     "-r", str(STREAM_FPS),
     "-i", FIFO_PATH,
-    "-vf", f"vflip,scale={OUT_W}:{OUT_H},format=yuv420p",
+    "-vf", "vflip,format=yuv420p" if _pre_scaled else f"vflip,scale={OUT_W}:{OUT_H},format=yuv420p",
     "-c:v", H264_ENCODER,
     "-b:v", str(STREAM_BITRATE),
     "-g", str(GOP_SIZE),

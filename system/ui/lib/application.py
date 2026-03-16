@@ -51,6 +51,10 @@ if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
 STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI framebuffer via FIFO to ui_streamd
 STREAM_UI_FIFO = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
 STREAM_UI_SKIP = int(os.getenv("STREAM_UI_SKIP", "1"))  # Skip N frames between captures (1=10fps at 20fps UI)
+# Resize frame before writing to FIFO — reduces FIFO bandwidth and ffmpeg work
+_stream_ui_w = int(os.getenv("STREAM_UI_W", "0"))
+_stream_ui_h = int(os.getenv("STREAM_UI_H", "0"))
+STREAM_UI_RESIZE: tuple[int, int] | None = (_stream_ui_w, _stream_ui_h) if _stream_ui_w and _stream_ui_h else None
 
 GL_VERSION = """
 #version 300 es
@@ -580,15 +584,21 @@ class GuiApplication:
             image = rl.load_image_from_texture(self._render_texture.texture)
             data_size = image.width * image.height * 4
             raw_rgba = bytes(rl.ffi.buffer(image.data, data_size))
-            rl.unload_image(image)
             if _record_due:
               self._ffmpeg_proc.stdin.write(raw_rgba)
               self._ffmpeg_proc.stdin.flush()
             if _stream_due and self._stream_queue is not None:
+              if STREAM_UI_RESIZE is not None:
+                sw, sh = STREAM_UI_RESIZE
+                rl.image_resize(image, sw, sh)  # resize in-place, reallocates image.data
+                stream_data = bytes(rl.ffi.buffer(image.data, sw * sh * 4))
+              else:
+                stream_data = raw_rgba
               try:
-                self._stream_queue.put_nowait(raw_rgba)
+                self._stream_queue.put_nowait(stream_data)
               except Exception:
                 pass  # drop frame if worker is behind
+            rl.unload_image(image)
 
         self._monitor_fps()
         self._frame += 1
