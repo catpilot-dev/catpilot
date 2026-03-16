@@ -48,6 +48,8 @@ RECORD_RAW = os.getenv("RECORD_RAW") == "1"  # Raw YUV420p output (no encoding, 
 RECORD_VF = os.getenv("RECORD_VF", "")  # Extra video filters (e.g. "scale=1080:540" for downscale)
 if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
   RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
+STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI framebuffer via FIFO to ui_streamd
+STREAM_UI_FIFO = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
 
 GL_VERSION = """
 #version 300 es
@@ -218,6 +220,8 @@ class GuiApplication:
     self._render_texture: rl.RenderTexture | None = None
     self._burn_in_shader: rl.Shader | None = None
     self._ffmpeg_proc: subprocess.Popen | None = None
+    self._stream_queue: object = None  # queue.Queue for STREAM_UI frames
+    self._stream_thread: threading.Thread | None = None
     self._textures: dict[str, rl.Texture] = {}
     self._target_fps: int = _DEFAULT_FPS
     self._last_fps_log_time: float = time.monotonic()
@@ -331,6 +335,12 @@ class GuiApplication:
         self._ffmpeg_proc = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
 
       rl.set_target_fps(fps)
+
+      if STREAM_UI:
+        import queue as _queue
+        self._stream_queue = _queue.Queue(maxsize=2)
+        self._stream_thread = threading.Thread(target=self._run_stream_worker, daemon=True)
+        self._stream_thread.start()
 
       self._target_fps = fps
       self._set_styles()
@@ -562,14 +572,20 @@ class GuiApplication:
 
         rl.end_drawing()
 
-        if RECORD:
+        if (RECORD or STREAM_UI) and self._render_texture:
           if RECORD_SKIP <= 0 or self._frame % (RECORD_SKIP + 1) == 0:
             image = rl.load_image_from_texture(self._render_texture.texture)
             data_size = image.width * image.height * 4
-            data = bytes(rl.ffi.buffer(image.data, data_size))
-            self._ffmpeg_proc.stdin.write(data)
-            self._ffmpeg_proc.stdin.flush()
+            raw_rgba = bytes(rl.ffi.buffer(image.data, data_size))
             rl.unload_image(image)
+            if RECORD:
+              self._ffmpeg_proc.stdin.write(raw_rgba)
+              self._ffmpeg_proc.stdin.flush()
+            if STREAM_UI and self._stream_queue is not None:
+              try:
+                self._stream_queue.put_nowait(raw_rgba)
+              except Exception:
+                pass  # drop frame if worker is behind
 
         self._monitor_fps()
         self._frame += 1
@@ -684,6 +700,27 @@ class GuiApplication:
     # Store callback reference
     self._trace_log_callback = trace_log_callback
     rl.set_trace_log_callback(self._trace_log_callback)
+
+  def _run_stream_worker(self):
+    """Background thread: drain _stream_queue and write raw RGBA to FIFO for ui_streamd."""
+    import queue as _queue
+    fifo_path = STREAM_UI_FIFO
+    if not os.path.exists(fifo_path):
+      os.mkfifo(fifo_path)
+    try:
+      # open() blocks until the reader (ffmpeg in ui_streamd) opens the other end
+      with open(fifo_path, 'wb', buffering=0) as f:
+        while True:
+          try:
+            data = self._stream_queue.get(timeout=1.0)
+            f.write(data)
+          except _queue.Empty:
+            continue
+          except BrokenPipeError:
+            cloudlog.warning("UI stream FIFO: reader disconnected")
+            break
+    except Exception as e:
+      cloudlog.warning(f"UI stream worker exited: {e}")
 
   def _monitor_fps(self):
     fps = rl.get_fps()
