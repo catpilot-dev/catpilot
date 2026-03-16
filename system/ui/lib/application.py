@@ -702,25 +702,28 @@ class GuiApplication:
     rl.set_trace_log_callback(self._trace_log_callback)
 
   def _run_stream_worker(self):
-    """Background thread: drain _stream_queue and write raw RGBA to FIFO for ui_streamd."""
+    """Background thread: drain _stream_queue and write raw RGBA to FIFO for ui_streamd.
+    Reconnects automatically when ui_streamd restarts (BrokenPipeError)."""
     import queue as _queue
     fifo_path = STREAM_UI_FIFO
     if not os.path.exists(fifo_path):
       os.mkfifo(fifo_path)
-    try:
-      # open() blocks until the reader (ffmpeg in ui_streamd) opens the other end
-      with open(fifo_path, 'wb', buffering=0) as f:
-        while True:
-          try:
-            data = self._stream_queue.get(timeout=1.0)
-            f.write(data)
-          except _queue.Empty:
-            continue
-          except BrokenPipeError:
-            cloudlog.warning("UI stream FIFO: reader disconnected")
-            break
-    except Exception as e:
-      cloudlog.warning(f"UI stream worker exited: {e}")
+    while True:
+      try:
+        # open() blocks until the reader (ffmpeg in ui_streamd) opens the other end
+        with open(fifo_path, 'wb', buffering=0) as f:
+          while True:
+            try:
+              data = self._stream_queue.get(timeout=1.0)
+              f.write(data)
+            except _queue.Empty:
+              continue
+            except BrokenPipeError:
+              cloudlog.warning("UI stream FIFO: reader disconnected, reconnecting")
+              break
+      except Exception as e:
+        cloudlog.warning(f"UI stream worker error: {e}")
+        time.sleep(0.5)
 
   def _monitor_fps(self):
     fps = rl.get_fps()
