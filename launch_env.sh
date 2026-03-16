@@ -42,7 +42,3 @@ fi
 
 export STAGING_ROOT="/data/safe_staging"
 
-# Phone display: stream UI framebuffer via WebRTC instead of camera
-export STREAM_UI=1
-export STREAM_UI_W=1080
-export STREAM_UI_H=540
