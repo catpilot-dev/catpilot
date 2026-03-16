@@ -516,8 +516,8 @@ class GuiApplication:
         if len(self._mouse_events) > 0:
           self._last_mouse_event = self._mouse_events[-1]
 
-        # Skip rendering when screen is off
-        if not self._should_render:
+        # Skip rendering when screen is off (but keep rendering when streaming UI)
+        if not self._should_render and not STREAM_UI:
           if PC:
             rl.poll_input_events()
           time.sleep(1 / self._target_fps)
