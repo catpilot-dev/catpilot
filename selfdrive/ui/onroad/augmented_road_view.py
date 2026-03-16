@@ -83,6 +83,9 @@ class AugmentedRoadView(CameraView):
     # Render the base camera view
     super()._render(rect)
 
+    # Pass camera frame_id to model renderer for sync diagnostics
+    self.model_renderer.set_camera_frame_id(self.frame_id)
+
     # Draw all UI overlays
     self.model_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
