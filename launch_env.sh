@@ -41,3 +41,6 @@ if [ "$AGNOS_MAJOR" -lt 16 ] 2>/dev/null; then
 fi
 
 export STAGING_ROOT="/data/safe_staging"
+
+# Phone display: stream UI framebuffer via WebRTC instead of camera
+export STREAM_UI=1
