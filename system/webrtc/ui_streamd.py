@@ -3,9 +3,9 @@
 ui_streamd: stream the raylib UI framebuffer via WebRTC.
 
 Reads raw RGBA frames from a FIFO written by application.py (STREAM_UI=1),
-encodes them with the hardware H264 encoder (h264_v4l2m2m), and publishes
-H264 packets to cereal as livestreamRoadEncodeData — the same socket that
-webrtcd already reads for camera streaming.
+encodes them with libx264 (software, TICI h264_v4l2m2m is not accessible via
+ffmpeg), and publishes H264 packets to cereal as livestreamRoadEncodeData —
+the same socket that webrtcd already reads for camera streaming.
 
 Intended process config (catpilot phone-display branch):
   STREAM_UI=1 → run ui_streamd (always_run) + webrtcd (always_run)
@@ -24,7 +24,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.system.hardware import HARDWARE
 
 FIFO_PATH = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
-STREAM_BITRATE = int(os.getenv("STREAM_BITRATE", "2000000"))  # 2 Mbps default for UI
+STREAM_BITRATE = int(os.getenv("STREAM_BITRATE", "1000000"))  # 1 Mbps for 1080x540
 GOP_SIZE = 15
 V4L2_BUF_FLAG_KEYFRAME = 8
 
@@ -33,9 +33,12 @@ UI_W = 2160
 UI_H = 1080
 UI_FPS = int(os.getenv("FPS", "20"))
 
-# H264 encoder: hardware on device, software fallback on PC
-_is_pc = HARDWARE.get_device_type() == "pc"
-H264_ENCODER = "libx264" if _is_pc else "h264_v4l2m2m"
+# Output resolution: scale down 2x to reduce encoder load on C3's throttled CPU
+OUT_W = int(os.getenv("STREAM_UI_W", "1080"))
+OUT_H = int(os.getenv("STREAM_UI_H", "540"))
+
+# libx264: h264_v4l2m2m is not accessible via ffmpeg on TICI (Qualcomm-specific ioctl path)
+H264_ENCODER = "libx264"
 
 
 SC4 = b'\x00\x00\x00\x01'
@@ -59,7 +62,7 @@ def split_nal_units(data: bytes) -> tuple[bytes, bytes]:
 
 
 def build_ffmpeg_cmd() -> list[str]:
-  cmd = [
+  return [
     "ffmpeg",
     "-v", "warning",
     "-f", "rawvideo",
@@ -67,18 +70,15 @@ def build_ffmpeg_cmd() -> list[str]:
     "-s", f"{UI_W}x{UI_H}",
     "-r", str(UI_FPS),
     "-i", FIFO_PATH,
-    "-vf", "vflip,format=yuv420p",
+    "-vf", f"vflip,scale={OUT_W}:{OUT_H},format=yuv420p",
     "-c:v", H264_ENCODER,
     "-b:v", str(STREAM_BITRATE),
     "-g", str(GOP_SIZE),
-    "-bf", "0",          # no B-frames — lower latency
+    "-preset", "ultrafast",
+    "-tune", "zerolatency",
     "-f", "h264",
     "pipe:1",
   ]
-  if H264_ENCODER == "libx264":
-    cmd[cmd.index("-bf") - 1:cmd.index("-bf") + 1] = []  # remove -bf (libx264 uses -tune)
-    cmd += ["-tune", "zerolatency", "-preset", "ultrafast"]
-  return cmd
 
 
 def run(pm: messaging.PubMaster) -> None:
@@ -128,8 +128,8 @@ def run(pm: messaging.PubMaster) -> None:
       edat = msg.livestreamRoadEncodeData
       edat.data = frame_data
       edat.header = header
-      edat.width = UI_W
-      edat.height = UI_H
+      edat.width = OUT_W
+      edat.height = OUT_H
       edat.unixTimestampNanos = int(time.time() * 1e9)
 
       idx = edat.idx
