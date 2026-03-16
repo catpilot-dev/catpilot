@@ -50,6 +50,7 @@ if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
   RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
 STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI framebuffer via FIFO to ui_streamd
 STREAM_UI_FIFO = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
+STREAM_UI_SKIP = int(os.getenv("STREAM_UI_SKIP", "1"))  # Skip N frames between captures (1=10fps at 20fps UI)
 
 GL_VERSION = """
 #version 300 es
@@ -573,15 +574,17 @@ class GuiApplication:
         rl.end_drawing()
 
         if (RECORD or STREAM_UI) and self._render_texture:
-          if RECORD_SKIP <= 0 or self._frame % (RECORD_SKIP + 1) == 0:
+          _record_due = RECORD and (RECORD_SKIP <= 0 or self._frame % (RECORD_SKIP + 1) == 0)
+          _stream_due = STREAM_UI and (STREAM_UI_SKIP <= 0 or self._frame % (STREAM_UI_SKIP + 1) == 0)
+          if _record_due or _stream_due:
             image = rl.load_image_from_texture(self._render_texture.texture)
             data_size = image.width * image.height * 4
             raw_rgba = bytes(rl.ffi.buffer(image.data, data_size))
             rl.unload_image(image)
-            if RECORD:
+            if _record_due:
               self._ffmpeg_proc.stdin.write(raw_rgba)
               self._ffmpeg_proc.stdin.flush()
-            if STREAM_UI and self._stream_queue is not None:
+            if _stream_due and self._stream_queue is not None:
               try:
                 self._stream_queue.put_nowait(raw_rgba)
               except Exception:

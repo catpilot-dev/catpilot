@@ -32,6 +32,7 @@ V4L2_BUF_FLAG_KEYFRAME = 8
 UI_W = 2160
 UI_H = 1080
 UI_FPS = int(os.getenv("FPS", "20"))
+STREAM_FPS = UI_FPS // (int(os.getenv("STREAM_UI_SKIP", "1")) + 1)  # matches application.py skip
 
 # Output resolution: scale down 2x to reduce encoder load on C3's throttled CPU
 OUT_W = int(os.getenv("STREAM_UI_W", "1080"))
@@ -68,7 +69,7 @@ def build_ffmpeg_cmd() -> list[str]:
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
     "-s", f"{UI_W}x{UI_H}",
-    "-r", str(UI_FPS),
+    "-r", str(STREAM_FPS),
     "-i", FIFO_PATH,
     "-vf", f"vflip,scale={OUT_W}:{OUT_H},format=yuv420p",
     "-c:v", H264_ENCODER,
