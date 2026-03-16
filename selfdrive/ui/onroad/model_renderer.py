@@ -114,12 +114,12 @@ class ModelRenderer(Widget):
     lead_one = radar_state.leadOne if radar_state else None
     render_lead_indicator = self._longitudinal_control and radar_state is not None
 
-    # Log frame sync diagnostic (first 100 updates, then every 100th)
+    # Log frame sync diagnostic (first 200 updates, then every 200th)
     if self._camera_frame_id > 0 and model.frameId > 0:
       delta = self._camera_frame_id - model.frameId
       self._frame_sync_log_count += 1
-      if self._frame_sync_log_count <= 100 or self._frame_sync_log_count % 100 == 0:
-        cloudlog.debug(f"frame_sync cam={self._camera_frame_id} model={model.frameId} delta={delta}")
+      if self._frame_sync_log_count <= 200 or self._frame_sync_log_count % 200 == 0:
+        print(f"frame_sync cam={self._camera_frame_id} model={model.frameId} delta={delta}", flush=True)
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
