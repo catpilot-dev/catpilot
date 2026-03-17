@@ -528,6 +528,12 @@ class GuiApplication:
 
         rl.end_drawing()
 
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.post_end_drawing', None)
+        except ImportError:
+          pass
+
         if RECORD:
           image = rl.load_image_from_texture(self._render_texture.texture)
           data_size = image.width * image.height * 4
