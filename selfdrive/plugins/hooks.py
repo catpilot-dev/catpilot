@@ -114,11 +114,15 @@ class HookRegistry:
       return default
 
     result = default
-    for priority, plugin_name, callback in callbacks:
+    for i, (priority, plugin_name, callback) in enumerate(callbacks):
       try:
         result = callback(result, *args, **kwargs)
       except Exception:
-        cloudlog.exception(f"Plugin '{plugin_name}' hook '{hook_name}' failed, returning default")
+        skipped = [name for _, name, _ in callbacks[i + 1:]]
+        msg = f"Plugin '{plugin_name}' hook '{hook_name}' failed, returning default"
+        if skipped:
+          msg += f" (skipping remaining plugins: {skipped})"
+        cloudlog.exception(msg)
         return default
     return result
 

@@ -19,6 +19,8 @@ if TYPE_CHECKING:
   from aiortc.rtcdatachannel import RTCDataChannel
 
 from openpilot.system.webrtc.schema import generate_field
+from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.plugins.hooks import hooks
 from cereal import messaging, log
 
 
@@ -156,6 +158,7 @@ class StreamSession:
     self.logger = logging.getLogger("webrtcd")
     self.logger.info("New stream session (%s), cameras %s, audio in %s out %s, incoming services %s, outgoing services %s",
                       self.identifier, cameras, config.incoming_audio_track, config.expected_audio_track, incoming_services, outgoing_services)
+    cloudlog.info(f"webrtcd: new session {self.identifier} cameras={cameras}")
 
   def start(self):
     self.run_task = asyncio.create_task(self.run())
@@ -194,13 +197,18 @@ class StreamSession:
         self.audio_output.addTrack(track)
         self.audio_output.start()
       self.logger.info("Stream session (%s) connected", self.identifier)
+      cloudlog.info(f"webrtcd: session {self.identifier} connected")
+      hooks.run('webrtc.session_started', None, self.identifier)
 
       await self.stream.wait_for_disconnection()
       await self.post_run_cleanup()
 
       self.logger.info("Stream session (%s) ended", self.identifier)
-    except Exception:
+      cloudlog.info(f"webrtcd: session {self.identifier} ended")
+      hooks.run('webrtc.session_ended', None, self.identifier)
+    except Exception as e:
       self.logger.exception("Stream session failure")
+      cloudlog.error(f"webrtcd: session {self.identifier} failed: {e}")
 
   async def post_run_cleanup(self):
     await self.stream.stop()
@@ -221,12 +229,20 @@ class StreamRequestBody:
 async def get_stream(request: 'web.Request'):
   stream_dict, debug_mode = request.app['streams'], request.app['debug']
   raw_body = await request.json()
-  body = StreamRequestBody(**raw_body)
+  try:
+    body = StreamRequestBody(**raw_body)
+  except TypeError as e:
+    cloudlog.error(f"webrtcd: bad stream request body: {e}")
+    raise web.HTTPBadRequest(text=f"Invalid request body: {e}") from e
 
-  session = StreamSession(body.sdp, body.cameras, body.bridge_services_in, body.bridge_services_out, debug_mode)
-  answer = await session.get_answer()
+  try:
+    session = StreamSession(body.sdp, body.cameras, body.bridge_services_in, body.bridge_services_out, debug_mode)
+    answer = await session.get_answer()
+  except Exception as e:
+    cloudlog.error(f"webrtcd: failed to create session: {e}")
+    raise web.HTTPInternalServerError(text=f"Session setup failed: {e}") from e
+
   session.start()
-
   stream_dict[session.identifier] = session
 
   return web.json_response({"sdp": answer.sdp, "type": answer.type})
@@ -266,6 +282,8 @@ def webrtcd_thread(host: str, port: int, debug: bool):
   logging.getLogger("WebRTCStream").setLevel(logging_level)
   logging.getLogger("webrtcd").setLevel(logging_level)
 
+  cloudlog.info(f"webrtcd: starting on {host}:{port}")
+
   app = web.Application()
 
   app['streams'] = dict()
@@ -275,7 +293,18 @@ def webrtcd_thread(host: str, port: int, debug: bool):
   app.router.add_post("/notify", post_notify)
   app.router.add_get("/schema", get_schema)
 
-  web.run_app(app, host=host, port=port)
+  # Allow plugins to register additional routes (e.g. /health, metrics)
+  registered = hooks.run('webrtc.app_routes', [], app)
+  if registered:
+    cloudlog.info(f"webrtcd: plugin routes registered: {registered}")
+  else:
+    cloudlog.info("webrtcd: no plugin routes registered")
+
+  try:
+    web.run_app(app, host=host, port=port)
+  except Exception as e:
+    cloudlog.error(f"webrtcd: fatal error: {e}")
+    raise
 
 
 def main():

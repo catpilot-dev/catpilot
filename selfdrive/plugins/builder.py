@@ -282,6 +282,48 @@ def _patch_services(plugin_dirs: list[str]) -> None:
   cloudlog.info("plugin builder: patched services.py")
 
 
+def _patch_event_names(plugin_dirs: list[str]) -> None:
+  """Inject EventName enum entries into log.capnp from plugin manifests.
+
+  Plugins declare custom event names under cereal.event_names:
+    "cereal": { "event_names": { "phoneDisplayUnavailable": 98 } }
+
+  Idempotent: skips entries already present. Inserts before the closing
+  brace of the EventName enum, matching the safety_models pattern used
+  for car.capnp.
+  """
+  event_names: dict[str, int] = {}
+  for plugin_dir in plugin_dirs:
+    manifest = _load_manifest(plugin_dir)
+    for name, ordinal in manifest.get('cereal', {}).get('event_names', {}).items():
+      event_names[name] = int(ordinal)
+
+  if not event_names:
+    return
+
+  content = _read_file(LOG_CAPNP)
+  changes = 0
+
+  for name, ordinal in sorted(event_names.items(), key=lambda x: x[1]):
+    if re.search(rf'\b{re.escape(name)}\s+@', content):
+      continue
+    # Insert before the closing brace of the EventName enum block
+    pattern = r'(    soundsUnavailableDEPRECATED @47;\n  \})'
+    replacement = rf'    {name} @{ordinal};\n\1'
+    new_content = re.sub(pattern, replacement, content)
+    if new_content != content:
+      content = new_content
+      changes += 1
+      cloudlog.info(f"plugin builder: injected EventName.{name} @{ordinal}")
+    else:
+      cloudlog.warning(f"plugin builder: failed to inject EventName.{name} — anchor not found")
+
+  if changes:
+    with open(LOG_CAPNP, 'w') as f:
+      f.write(content)
+    cloudlog.info(f"plugin builder: patched log.capnp EventName ({changes} entries)")
+
+
 def _write_params(plugin_dirs: list[str]) -> None:
   """Write plugin param defaults to each plugin's data dir.
 
@@ -328,6 +370,7 @@ def build() -> None:
 
   _patch_custom_capnp(plugin_dirs)
   _patch_log_capnp(plugin_dirs)
+  _patch_event_names(plugin_dirs)
   _patch_services(plugin_dirs)
   _write_params(plugin_dirs)
 

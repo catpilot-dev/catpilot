@@ -16,10 +16,11 @@ from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
-from openpilot.selfdrive.selfdrived.events import Events, ET
+from openpilot.selfdrive.selfdrived.events import Events, ET, EVENTS
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
+from openpilot.selfdrive.plugins.hooks import hooks
 
 from openpilot.system.version import get_build_metadata
 from openpilot.system.hardware import HARDWARE
@@ -104,6 +105,12 @@ class SelfdriveD:
     self.CS_prev = car.CarState.new_message()
     self.AM = AlertManager()
     self.events = Events()
+
+    # Allow plugins to register custom alert definitions before first cycle
+    plugin_alerts = hooks.run('selfdrived.alert_registry', {})
+    if plugin_alerts:
+      cloudlog.info(f"selfdrived: plugin alerts registered: {list(plugin_alerts.keys())}")
+    EVENTS.update(plugin_alerts)
 
     self.initialized = False
     self.enabled = False
@@ -205,6 +212,10 @@ class SelfdriveD:
       self.events.add(EventName.outOfSpace)
     if self.sm['deviceState'].memoryUsagePercent > 90 and not SIMULATION:
       self.events.add(EventName.lowMemory)
+
+    # Plugin-injectable events (e.g. phone_display safety block)
+    for extra_event in hooks.run('selfdrived.events', [], CS, self.sm):
+      self.events.add(extra_event)
 
     # Alert if fan isn't spinning for 5 seconds
     if self.sm['peripheralState'].pandaType != log.PandaState.PandaType.unknown:
