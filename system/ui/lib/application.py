@@ -577,6 +577,12 @@ class GuiApplication:
 
         rl.end_drawing()
 
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.post_end_drawing', None)
+        except ImportError:
+          pass
+
         if (RECORD or STREAM_UI) and self._render_texture:
           _record_due = RECORD and (RECORD_SKIP <= 0 or self._frame % (RECORD_SKIP + 1) == 0)
           _stream_due = STREAM_UI and (STREAM_UI_SKIP <= 0 or self._frame % (STREAM_UI_SKIP + 1) == 0)
