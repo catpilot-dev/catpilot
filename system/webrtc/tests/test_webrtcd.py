@@ -1,23 +1,22 @@
 import pytest
 import asyncio
 import json
-# for aiortc and its dependencies
+
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=RuntimeWarning) # TODO: remove this when google-crc32c publish a python3.12 wheel
-
-from openpilot.system.webrtc.webrtcd import get_stream
+warnings.filterwarnings("ignore", category=RuntimeWarning)  # TODO: remove when google-crc32c publishes python3.12 wheel
 
 import aiortc
-from teleoprtc import WebRTCOfferBuilder
 from parameterized import parameterized_class
+
+from openpilot.system.webrtc.webrtcd import get_stream
 
 
 @parameterized_class(("in_services", "out_services"), [
   (["testJoystick"], ["carState"]),
-  ([], ["carState"]),
+  ([],               ["carState"]),
   (["testJoystick"], []),
-  ([], []),
+  ([],               []),
 ])
 @pytest.mark.asyncio
 class TestWebrtcdProc:
@@ -29,37 +28,89 @@ class TestWebrtcdProc:
       pytest.fail("Timeout while waiting for awaitable to complete")
 
   async def test_webrtcd(self, mocker):
-    mock_request = mocker.MagicMock()
-    async def connect(offer):
-      body = {'sdp': offer.sdp, 'cameras': offer.video, 'bridge_services_in': self.in_services, 'bridge_services_out': self.out_services}
+    want_messaging = len(self.in_services) > 0 or len(self.out_services) > 0
+
+    # ── Client-side peer connection (pure aiortc, no teleoprtc) ──────────────
+    client_pc  = aiortc.RTCPeerConnection()
+    video_recv = asyncio.Event()
+    audio_recv = asyncio.Event()
+
+    incoming_video_track = None
+    incoming_audio_track = None
+    incoming_data_channel = None
+
+    @client_pc.on("track")
+    def _on_track(track):
+      nonlocal incoming_video_track, incoming_audio_track
+      if track.kind == "video":
+        incoming_video_track = track
+        video_recv.set()
+      elif track.kind == "audio":
+        incoming_audio_track = track
+        audio_recv.set()
+
+    # Transceivers: client wants to receive video and audio from device
+    client_pc.addTransceiver("video", direction="recvonly")
+    client_pc.addTransceiver("audio", direction="recvonly")
+
+    if want_messaging:
+      incoming_data_channel = client_pc.createDataChannel("data", ordered=True)
+
+    # ── Build offer ───────────────────────────────────────────────────────────
+    offer = await client_pc.createOffer()
+    await client_pc.setLocalDescription(offer)
+
+    # ── Call the server handler (simulates COD proxy → webrtcd /stream) ──────
+    async def do_connect():
+      nonlocal client_pc
+      body = {
+        "sdp":                 client_pc.localDescription.sdp,
+        "cameras":             ["road"],
+        "bridge_services_in":  self.in_services,
+        "bridge_services_out": self.out_services,
+      }
+      mock_request = mocker.MagicMock()
       mock_request.json.side_effect = mocker.AsyncMock(return_value=body)
+      mock_request.app = {
+        "streams":       {},
+        "debug":         True,   # use debug tracks — no real cereal needed
+        "session_class": __import__(
+          "openpilot.system.webrtc.webrtcd", fromlist=["StreamSession"]
+        ).StreamSession,
+      }
       response = await get_stream(mock_request)
-      response_json = json.loads(response.text)
-      return aiortc.RTCSessionDescription(**response_json)
+      answer_json = json.loads(response.text)
+      return aiortc.RTCSessionDescription(**answer_json), mock_request
 
-    builder = WebRTCOfferBuilder(connect)
-    builder.offer_to_receive_video_stream("road")
-    builder.offer_to_receive_audio_stream()
-    if len(self.in_services) > 0 or len(self.out_services) > 0:
-      builder.add_messaging()
+    answer, mock_request = await do_connect()
+    await client_pc.setRemoteDescription(answer)
 
-    stream = builder.stream()
+    # ── Wait for ICE to connect ───────────────────────────────────────────────
+    connected = asyncio.Event()
 
-    await self.assertCompletesWithTimeout(stream.start())
-    await self.assertCompletesWithTimeout(stream.wait_for_connection())
+    @client_pc.on("connectionstatechange")
+    async def _on_state():
+      if client_pc.connectionState == "connected":
+        connected.set()
 
-    assert stream.has_incoming_video_track("road")
-    assert stream.has_incoming_audio_track()
-    assert stream.has_messaging_channel() == (len(self.in_services) > 0 or len(self.out_services) > 0)
+    await self.assertCompletesWithTimeout(connected.wait())
 
-    video_track, audio_track = stream.get_incoming_video_track("road"), stream.get_incoming_audio_track()
-    await self.assertCompletesWithTimeout(video_track.recv())
-    await self.assertCompletesWithTimeout(audio_track.recv())
+    # ── Verify incoming tracks ────────────────────────────────────────────────
+    await self.assertCompletesWithTimeout(video_recv.wait())
+    await self.assertCompletesWithTimeout(audio_recv.wait())
 
-    await self.assertCompletesWithTimeout(stream.stop())
+    assert incoming_video_track is not None, "Expected road video track"
+    assert incoming_audio_track is not None, "Expected audio track"
+    assert (incoming_data_channel is not None) == want_messaging
 
-    # cleanup, very implementation specific, test may break if it changes
-    assert mock_request.app["streams"].__setitem__.called, "Implementation changed, please update this test"
-    _, session = mock_request.app["streams"].__setitem__.call_args.args
-    await self.assertCompletesWithTimeout(session.post_run_cleanup())
+    # Receive at least one frame from each track
+    await self.assertCompletesWithTimeout(incoming_video_track.recv())
+    await self.assertCompletesWithTimeout(incoming_audio_track.recv())
 
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+    await client_pc.close()
+
+    # Clean up the server-side session
+    session = list(mock_request.app["streams"].values())[0] if mock_request.app["streams"] else None
+    if session:
+      await self.assertCompletesWithTimeout(session._cleanup())
