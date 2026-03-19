@@ -51,7 +51,7 @@ if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
 STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI framebuffer via FIFO to ui_streamd
 STREAM_UI_FIFO = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
 STREAM_UI_SKIP = int(os.getenv("STREAM_UI_SKIP", "1"))  # Skip N frames between captures (1=10fps at 20fps UI)
-# Resize frame before writing to FIFO — reduces FIFO bandwidth and ffmpeg work
+# Resize frame before writing to FIFO — reduces FIFO bandwidth and encoder work
 _stream_ui_w = int(os.getenv("STREAM_UI_W", "0"))
 _stream_ui_h = int(os.getenv("STREAM_UI_H", "0"))
 STREAM_UI_RESIZE: tuple[int, int] | None = (_stream_ui_w, _stream_ui_h) if _stream_ui_w and _stream_ui_h else None

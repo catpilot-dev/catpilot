@@ -3,161 +3,165 @@
 ui_streamd: stream the raylib UI framebuffer via WebRTC.
 
 Reads raw RGBA frames from a FIFO written by application.py (STREAM_UI=1),
-encodes them with libx264 (software, TICI h264_v4l2m2m is not accessible via
-ffmpeg), and publishes H264 packets to cereal as livestreamRoadEncodeData —
-the same socket that webrtcd already reads for camera streaming.
+encodes them with libx264 via PyAV (no ffmpeg subprocess), and publishes H264
+packets to cereal as livestreamRoadEncodeData — the same socket that webrtcd
+reads for camera streaming.
+
+Pipeline (no subprocess):
+  UI FIFO (RGBA bytes) → numpy read → av.VideoFrame → libx264 → cereal
 
 Intended process config (catpilot phone-display branch):
   STREAM_UI=1 → run ui_streamd (always_run) + webrtcd (always_run)
   STREAM_UI=0 → run stream_encoderd (only_onroad) + webrtcd (only_onroad)
+
+Hardware H264 (h264_v4l2m2m) is not accessible via libav on TICI —
+Qualcomm-specific ioctl path is only used by the native stream_encoderd.
 """
+import fractions
 import os
-import sys
 import time
-import subprocess
-import threading
 
 import av
+import numpy as np
 
 import cereal.messaging as messaging
 from openpilot.common.swaglog import cloudlog
-from openpilot.system.hardware import HARDWARE
 
-FIFO_PATH = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
-STREAM_BITRATE = int(os.getenv("STREAM_BITRATE", "1000000"))  # 1 Mbps for 1080x540
-GOP_SIZE = 15
+FIFO_PATH     = os.getenv("STREAM_UI_FIFO",   "/tmp/ui_stream.fifo")
+STREAM_BITRATE = int(os.getenv("STREAM_BITRATE", "1000000"))  # 1 Mbps
+GOP_SIZE      = int(os.getenv("STREAM_GOP",   "5"))   # ~0.5s at 10fps
 V4L2_BUF_FLAG_KEYFRAME = 8
 
 # UI canvas dimensions — must match GuiApplication defaults for big_ui (tici)
-UI_W = 2160
-UI_H = 1080
-UI_FPS = int(os.getenv("FPS", "20"))
-STREAM_FPS = UI_FPS // (int(os.getenv("STREAM_UI_SKIP", "1")) + 1)  # matches application.py skip
+UI_W    = 2160
+UI_H    = 1080
+UI_FPS  = int(os.getenv("FPS", "20"))
+STREAM_FPS = UI_FPS // (int(os.getenv("STREAM_UI_SKIP", "1")) + 1)
 
-# Output resolution: scale down 2x to reduce encoder load on C3's throttled CPU
+# Output resolution.  If STREAM_UI_W/H are set, application.py pre-scales the
+# RGBA frames before writing to the FIFO — no resize step needed here.
 OUT_W = int(os.getenv("STREAM_UI_W", "1080"))
-OUT_H = int(os.getenv("STREAM_UI_H", "540"))
-
-# If STREAM_UI_W/H are set, application.py pre-scales before writing to FIFO —
-# ffmpeg reads at output dimensions and no scale step is needed.
+OUT_H = int(os.getenv("STREAM_UI_H",  "540"))
 _pre_scaled = bool(os.getenv("STREAM_UI_W")) and bool(os.getenv("STREAM_UI_H"))
 FIFO_W = OUT_W if _pre_scaled else UI_W
 FIFO_H = OUT_H if _pre_scaled else UI_H
 
-# libx264: h264_v4l2m2m is not accessible via ffmpeg on TICI (Qualcomm-specific ioctl path)
-H264_ENCODER = "libx264"
+FRAME_BYTES = FIFO_W * FIFO_H * 4   # RGBA
 
 
 SC4 = b'\x00\x00\x00\x01'
 
 
 def split_nal_units(data: bytes) -> tuple[bytes, bytes]:
-  """Split annex-B keyframe data into (sps_pps_header, idr_and_remaining)."""
-  parts = data.split(SC4)
+  """Split annex-B H264 data into (sps_pps_header, frame_data).
+
+  PyAV's libx264 encoder emits packets with 3-byte start codes (\x00\x00\x01)
+  for non-first NAL units inside the same keyframe packet.  We must handle
+  both 3- and 4-byte start codes when splitting.
+  """
+  # Normalise: replace 3-byte start codes with 4-byte so we can split on SC4
+  normalised = data.replace(b'\x00\x00\x01', SC4)
+
   header = bytearray()
   frame_data = bytearray()
-  for part in parts:
+  for part in normalised.split(SC4):
     if not part:
       continue
     nal_type = part[0] & 0x1f
     chunk = SC4 + part
-    if nal_type in (7, 8):  # SPS=7, PPS=8
+    if nal_type in (7, 8):   # SPS=7, PPS=8
       header.extend(chunk)
     else:
       frame_data.extend(chunk)
   return bytes(header), bytes(frame_data)
 
 
-def build_ffmpeg_cmd() -> list[str]:
-  return [
-    "ffmpeg",
-    "-v", "warning",
-    "-f", "rawvideo",
-    "-pix_fmt", "rgba",
-    "-s", f"{FIFO_W}x{FIFO_H}",
-    "-r", str(STREAM_FPS),
-    "-i", FIFO_PATH,
-    "-vf", "vflip,format=yuv420p" if _pre_scaled else f"vflip,scale={OUT_W}:{OUT_H},format=yuv420p",
-    "-c:v", H264_ENCODER,
-    "-b:v", str(STREAM_BITRATE),
-    "-g", str(GOP_SIZE),
-    "-preset", "ultrafast",
-    "-tune", "zerolatency",
-    "-f", "h264",
-    "pipe:1",
-  ]
+def make_encoder() -> av.CodecContext:
+  ctx = av.CodecContext.create('libx264', 'w')
+  ctx.width     = OUT_W
+  ctx.height    = OUT_H
+  ctx.pix_fmt   = 'yuv420p'
+  ctx.time_base = fractions.Fraction(1, STREAM_FPS)
+  ctx.framerate = fractions.Fraction(STREAM_FPS)
+  ctx.bit_rate  = STREAM_BITRATE
+  ctx.gop_size  = GOP_SIZE
+  ctx.options   = {
+    'preset':        'ultrafast',
+    'tune':          'zerolatency',
+    'x264-params':   'nal-hrd=cbr:force-cfr=1',
+  }
+  ctx.open()
+  return ctx
 
 
 def run(pm: messaging.PubMaster) -> None:
-  # Create FIFO if needed — application.py also creates it, but race is fine
   if not os.path.exists(FIFO_PATH):
     os.mkfifo(FIFO_PATH)
 
-  cloudlog.info(f"ui_streamd: starting ffmpeg ({H264_ENCODER}) at {UI_W}x{UI_H}@{UI_FPS}fps")
-  proc = subprocess.Popen(
-    build_ffmpeg_cmd(),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.DEVNULL,
+  cloudlog.info(
+    f"ui_streamd: opening FIFO {FIFO_PATH} ({FIFO_W}x{FIFO_H} RGBA "
+    f"→ libx264 {OUT_W}x{OUT_H} @ {STREAM_FPS}fps, GOP={GOP_SIZE})"
   )
 
-  frame_id = 0
-  encode_id = 0
-  sps_pps: bytes = b""  # cache latest SPS/PPS for reconnecting clients
+  # open() blocks until application.py opens the write end
+  with open(FIFO_PATH, 'rb', buffering=0) as fifo:
+    enc = make_encoder()
+    frame_id   = 0
+    encode_id  = 0
+    pts        = 0
 
-  try:
-    container = av.open(
-      proc.stdout,
-      format="h264",
-      options={
-        "fflags": "nobuffer",
-        "analyzeduration": "0",
-        "probesize": "32",
-      },
-    )
-    stream = next(s for s in container.streams if s.type == "video")
-
-    for packet in container.demux(stream):
-      if packet.size == 0:
+    while True:
+      # Read one raw RGBA frame — blocks until the full frame is available
+      raw = fifo.read(FRAME_BYTES)
+      if len(raw) < FRAME_BYTES:
+        cloudlog.warning("ui_streamd: FIFO closed or short read, restarting")
         break
 
-      raw = bytes(packet)
-      is_kf = bool(packet.is_keyframe)
+      arr = np.frombuffer(raw, dtype=np.uint8).reshape(FIFO_H, FIFO_W, 4)
 
-      if is_kf:
-        header, frame_data = split_nal_units(raw)
-        if header:
-          sps_pps = header  # update cached SPS/PPS
+      # Vertical flip (raylib renders bottom-up)
+      arr = arr[::-1]
+
+      # Scale to output resolution if not pre-scaled by application.py
+      if not _pre_scaled and (OUT_W != FIFO_W or OUT_H != FIFO_H):
+        frame_in = av.VideoFrame.from_ndarray(arr, format='rgba')
+        frame_yuv = frame_in.reformat(width=OUT_W, height=OUT_H, format='yuv420p')
       else:
-        header = b""
-        frame_data = raw
+        frame_in = av.VideoFrame.from_ndarray(arr, format='rgba')
+        frame_yuv = frame_in.reformat(format='yuv420p')
 
-      msg = messaging.new_message("livestreamRoadEncodeData")
-      edat = msg.livestreamRoadEncodeData
-      edat.data = frame_data
-      edat.header = header
-      edat.width = OUT_W
-      edat.height = OUT_H
-      edat.unixTimestampNanos = int(time.time() * 1e9)
+      frame_yuv.pts = pts
+      pts += 1
 
-      idx = edat.idx
-      idx.frameId = frame_id
-      idx.encodeId = encode_id
-      idx.segmentNum = 0
-      idx.segmentId = frame_id
-      idx.segmentIdEncode = frame_id
-      idx.flags = V4L2_BUF_FLAG_KEYFRAME if is_kf else 0
-      idx.len = len(frame_data)
+      for packet in enc.encode(frame_yuv):
+        raw_pkt = bytes(packet)
+        is_kf = bool(packet.is_keyframe)
 
-      pm.send("livestreamRoadEncodeData", msg)
+        if is_kf:
+          header, frame_data = split_nal_units(raw_pkt)
+        else:
+          header, frame_data = b"", raw_pkt
 
-      frame_id += 1
-      encode_id += 1
+        msg = messaging.new_message("livestreamRoadEncodeData")
+        edat = msg.livestreamRoadEncodeData
+        edat.data   = frame_data
+        edat.header = header
+        edat.width  = OUT_W
+        edat.height = OUT_H
+        edat.unixTimestampNanos = int(time.time() * 1e9)
 
-  except Exception as e:
-    cloudlog.error(f"ui_streamd: stream loop error: {e}")
-  finally:
-    proc.terminate()
-    proc.wait()
+        idx = edat.idx
+        idx.frameId          = frame_id
+        idx.encodeId         = encode_id
+        idx.segmentNum       = 0
+        idx.segmentId        = frame_id
+        idx.segmentIdEncode  = frame_id
+        idx.flags            = V4L2_BUF_FLAG_KEYFRAME if is_kf else 0
+        idx.len              = len(frame_data)
+
+        pm.send("livestreamRoadEncodeData", msg)
+        frame_id  += 1
+        encode_id += 1
 
 
 def main() -> None:

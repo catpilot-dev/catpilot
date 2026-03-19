@@ -27,7 +27,7 @@ class LiveStreamVideoStreamTrack(VideoStreamTrack):
       msg = messaging.recv_one_or_none(self._sock)
       if msg is not None:
         break
-      await asyncio.sleep(0.005)
+      await asyncio.sleep(0.020)
 
     evta = getattr(msg, msg.which())
 
