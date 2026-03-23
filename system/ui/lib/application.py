@@ -48,13 +48,31 @@ RECORD_RAW = os.getenv("RECORD_RAW") == "1"  # Raw YUV420p output (no encoding, 
 RECORD_VF = os.getenv("RECORD_VF", "")  # Extra video filters (e.g. "scale=1080:540" for downscale)
 if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
   RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
-STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI framebuffer via FIFO to ui_streamd
-STREAM_UI_FIFO = os.getenv("STREAM_UI_FIFO", "/tmp/ui_stream.fifo")
-STREAM_UI_SKIP = int(os.getenv("STREAM_UI_SKIP", "1"))  # Skip N frames between captures (1=10fps at 20fps UI)
-# Resize frame before writing to FIFO — reduces FIFO bandwidth and encoder work
-_stream_ui_w = int(os.getenv("STREAM_UI_W", "0"))
-_stream_ui_h = int(os.getenv("STREAM_UI_H", "0"))
-STREAM_UI_RESIZE: tuple[int, int] | None = (_stream_ui_w, _stream_ui_h) if _stream_ui_w and _stream_ui_h else None
+STREAM_UI = os.getenv("STREAM_UI") == "1"  # Stream UI via in-process H.264 encoder → cereal
+STREAM_UI_SKIP = int(os.getenv("STREAM_UI_SKIP", "1"))  # Skip N frames (1 = 10fps at 20fps UI)
+STREAM_UI_BITRATE = int(os.getenv("STREAM_BITRATE", "1000000"))  # H.264 bitrate (default 1 Mbps)
+STREAM_UI_GOP = int(os.getenv("STREAM_GOP", "5"))  # Keyframe interval (~0.5s at 10fps)
+# Output resolution — downscale before encoding to reduce encoder CPU load
+_stream_ui_w = int(os.getenv("STREAM_UI_W", "1080"))
+_stream_ui_h = int(os.getenv("STREAM_UI_H", "540"))
+STREAM_UI_OUT: tuple[int, int] = (_stream_ui_w, _stream_ui_h)
+
+_SC4 = b'\x00\x00\x00\x01'
+
+
+def _split_nal_units(data: bytes) -> tuple[bytes, bytes]:
+  """Split annex-B H.264 data into (sps_pps_header, frame_data)."""
+  normalised = data.replace(b'\x00\x00\x01', _SC4)
+  header, frame = bytearray(), bytearray()
+  for part in normalised.split(_SC4):
+    if not part:
+      continue
+    chunk = _SC4 + part
+    if part[0] & 0x1f in (7, 8):  # SPS=7, PPS=8
+      header.extend(chunk)
+    else:
+      frame.extend(chunk)
+  return bytes(header), bytes(frame)
 
 GL_VERSION = """
 #version 300 es
@@ -344,7 +362,7 @@ class GuiApplication:
       if STREAM_UI:
         import queue as _queue
         self._stream_queue = _queue.Queue(maxsize=2)
-        self._stream_thread = threading.Thread(target=self._run_stream_worker, daemon=True)
+        self._stream_thread = threading.Thread(target=self._run_stream_encoder, daemon=True)
         self._stream_thread.start()
 
       self._target_fps = fps
@@ -588,22 +606,18 @@ class GuiApplication:
           _stream_due = STREAM_UI and (STREAM_UI_SKIP <= 0 or self._frame % (STREAM_UI_SKIP + 1) == 0)
           if _record_due or _stream_due:
             image = rl.load_image_from_texture(self._render_texture.texture)
-            data_size = image.width * image.height * 4
-            raw_rgba = bytes(rl.ffi.buffer(image.data, data_size))
             if _record_due:
-              self._ffmpeg_proc.stdin.write(raw_rgba)
+              data_size = image.width * image.height * 4
+              self._ffmpeg_proc.stdin.write(bytes(rl.ffi.buffer(image.data, data_size)))
               self._ffmpeg_proc.stdin.flush()
             if _stream_due and self._stream_queue is not None:
-              if STREAM_UI_RESIZE is not None:
-                sw, sh = STREAM_UI_RESIZE
-                rl.image_resize(image, sw, sh)  # resize in-place, reallocates image.data
-                stream_data = bytes(rl.ffi.buffer(image.data, sw * sh * 4))
-              else:
-                stream_data = raw_rgba
+              out_w, out_h = STREAM_UI_OUT
+              if image.width != out_w or image.height != out_h:
+                rl.image_resize(image, out_w, out_h)
               try:
-                self._stream_queue.put_nowait(stream_data)
+                self._stream_queue.put_nowait(bytes(rl.ffi.buffer(image.data, out_w * out_h * 4)))
               except Exception:
-                pass  # drop frame if worker is behind
+                pass  # drop frame if encoder is behind
             rl.unload_image(image)
 
         self._monitor_fps()
@@ -720,29 +734,83 @@ class GuiApplication:
     self._trace_log_callback = trace_log_callback
     rl.set_trace_log_callback(self._trace_log_callback)
 
-  def _run_stream_worker(self):
-    """Background thread: drain _stream_queue and write raw RGBA to FIFO for ui_streamd.
-    Reconnects automatically when ui_streamd restarts (BrokenPipeError)."""
+  def _run_stream_encoder(self):
+    """Background thread: drain _stream_queue, encode H.264 in-process, publish to cereal.
+
+    Replaces the old FIFO + ui_streamd subprocess pipeline. Frame capture still happens
+    via rl.load_image_from_texture in the render loop — no FIFO, no extra process.
+    """
+    import fractions
     import queue as _queue
-    fifo_path = STREAM_UI_FIFO
-    if not os.path.exists(fifo_path):
-      os.mkfifo(fifo_path)
+    import numpy as np
+    import av
+    try:
+      import cereal.messaging as messaging
+    except ImportError:
+      cloudlog.warning("UI stream encoder: cereal not available, streaming disabled")
+      return
+
+    out_w, out_h = STREAM_UI_OUT
+    stream_fps = max(1, self._target_fps // (STREAM_UI_SKIP + 1))
+
+    ctx = av.CodecContext.create('libx264', 'w')
+    ctx.width = out_w
+    ctx.height = out_h
+    ctx.pix_fmt = 'yuv420p'
+    ctx.time_base = fractions.Fraction(1, stream_fps)
+    ctx.framerate = fractions.Fraction(stream_fps)
+    ctx.bit_rate = STREAM_UI_BITRATE
+    ctx.gop_size = STREAM_UI_GOP
+    ctx.options = {'preset': 'ultrafast', 'tune': 'zerolatency', 'x264-params': 'nal-hrd=cbr:force-cfr=1'}
+    ctx.open()
+
+    pm = messaging.PubMaster(["livestreamRoadEncodeData"])
+    frame_id = encode_id = pts = 0
+
+    cloudlog.info(f"UI stream encoder: {out_w}x{out_h} @ {stream_fps}fps, {STREAM_UI_BITRATE//1000}kbps")
+
     while True:
       try:
-        # open() blocks until the reader (ffmpeg in ui_streamd) opens the other end
-        with open(fifo_path, 'wb', buffering=0) as f:
-          while True:
-            try:
-              data = self._stream_queue.get(timeout=1.0)
-              f.write(data)
-            except _queue.Empty:
-              continue
-            except BrokenPipeError:
-              cloudlog.warning("UI stream FIFO: reader disconnected, reconnecting")
-              break
+        raw = self._stream_queue.get(timeout=1.0)
+      except _queue.Empty:
+        continue
       except Exception as e:
-        cloudlog.warning(f"UI stream worker error: {e}")
-        time.sleep(0.5)
+        cloudlog.warning(f"UI stream encoder queue error: {e}")
+        break
+
+      try:
+        # raw is RGBA bytes at (out_w × out_h) if pre-scaled, else at full UI resolution
+        src_w = out_w if (self._width != out_w or self._height != out_h) else self._width
+        src_h = out_h if (self._width != out_w or self._height != out_h) else self._height
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape(src_h, src_w, 4)
+        arr = arr[::-1]  # vertical flip (OpenGL texture is bottom-up)
+
+        frame_in = av.VideoFrame.from_ndarray(arr, format='rgba')
+        frame_yuv = frame_in.reformat(width=out_w, height=out_h, format='yuv420p')
+        frame_yuv.pts = pts
+        pts += 1
+
+        for packet in ctx.encode(frame_yuv):
+          raw_pkt = bytes(packet)
+          is_kf = bool(packet.is_keyframe)
+          header, frame_data = _split_nal_units(raw_pkt) if is_kf else (b"", raw_pkt)
+
+          msg = messaging.new_message("livestreamRoadEncodeData")
+          edat = msg.livestreamRoadEncodeData
+          edat.data = frame_data
+          edat.header = header
+          edat.width = out_w
+          edat.height = out_h
+          edat.unixTimestampNanos = int(time.time() * 1e9)
+          edat.idx.frameId = frame_id
+          edat.idx.encodeId = encode_id
+          edat.idx.flags = 8 if is_kf else 0  # V4L2_BUF_FLAG_KEYFRAME = 8
+          edat.idx.len = len(frame_data)
+          pm.send("livestreamRoadEncodeData", msg)
+          frame_id += 1
+          encode_id += 1
+      except Exception as e:
+        cloudlog.warning(f"UI stream encoder frame error: {e}")
 
   def _monitor_fps(self):
     fps = rl.get_fps()
