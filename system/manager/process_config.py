@@ -112,7 +112,7 @@ procs = [
 
   # debug procs
   NativeProcess("bridge", "cereal/messaging", ["./bridge"], notcar),
-  PythonProcess("webrtcd", "system.webrtc.webrtcd", always_run if STREAM_UI else only_onroad),
+  PythonProcess("webrtcd", "system.webrtc.webrtcd", only_onroad),
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
   PythonProcess("joystick", "tools.joystick.joystick_control", and_(joystick, iscar)),
 ]
