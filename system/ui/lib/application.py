@@ -39,7 +39,15 @@ GRID_SIZE = int(os.getenv("GRID", "0"))
 PROFILE_RENDER = int(os.getenv("PROFILE_RENDER", "0"))
 PROFILE_STATS = int(os.getenv("PROFILE_STATS", "100"))  # Number of functions to show in profile output
 RECORD = os.getenv("RECORD") == "1"
-RECORD_OUTPUT = str(Path(os.getenv("RECORD_OUTPUT", "output")).with_suffix(".mp4"))
+RECORD_HLS = os.getenv("RECORD_HLS") == "1"
+RECORD_OUTPUT = os.getenv("RECORD_OUTPUT", "output.mp4")
+RECORD_SKIP = int(os.getenv("RECORD_SKIP", "0"))  # Skip N frames between captures (0=capture every frame)
+RECORD_CODEC = os.getenv("RECORD_CODEC", "libx264")  # Video codec (libx264, h264_v4l2m2m, etc.)
+RECORD_FRAG_MP4 = os.getenv("RECORD_FRAG_MP4") == "1"  # Fragmented MP4 output (for streaming)
+RECORD_RAW = os.getenv("RECORD_RAW") == "1"  # Raw YUV420p output (no encoding, for WebRTC)
+RECORD_VF = os.getenv("RECORD_VF", "")  # Extra video filters (e.g. "scale=1080:540" for downscale)
+if not RECORD_HLS and not RECORD_FRAG_MP4 and not RECORD_RAW:
+  RECORD_OUTPUT = str(Path(RECORD_OUTPUT).with_suffix(".mp4"))
 
 GL_VERSION = """
 #version 300 es
@@ -278,6 +286,8 @@ class GuiApplication:
         rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
 
       if RECORD:
+        # Effective capture rate accounts for frame skipping
+        capture_fps = fps / (RECORD_SKIP + 1) if RECORD_SKIP > 0 else fps
         ffmpeg_args = [
           'ffmpeg',
           '-v', 'warning',          # Reduce ffmpeg log spam
@@ -285,15 +295,39 @@ class GuiApplication:
           '-f', 'rawvideo',         # Input format
           '-pix_fmt', 'rgba',       # Input pixel format
           '-s', f'{self._width}x{self._height}',  # Input resolution
-          '-r', str(fps),           # Input frame rate
+          '-r', str(capture_fps),   # Input frame rate (effective after skip)
           '-i', 'pipe:0',           # Input from stdin
-          '-vf', 'vflip,format=yuv420p',  # Flip vertically and convert rgba to yuv420p
-          '-c:v', 'libx264',        # Video codec
-          '-preset', 'ultrafast',   # Encoding speed
-          '-y',                     # Overwrite existing file
-          '-f', 'mp4',              # Output format
-          RECORD_OUTPUT,            # Output file path
+          '-vf', f'vflip,{RECORD_VF + "," if RECORD_VF else ""}format=yuv420p',
         ]
+        if not RECORD_RAW:
+          ffmpeg_args += ['-c:v', RECORD_CODEC]  # Video codec (libx264, h264_v4l2m2m, etc.)
+          if RECORD_CODEC == 'libx264':
+            ffmpeg_args += ['-preset', 'ultrafast']
+        ffmpeg_args += ['-y']       # Overwrite existing file
+
+        if RECORD_RAW:
+          # Raw YUV420p output — no encoding, for WebRTC (aiortc encodes)
+          ffmpeg_args += ['-f', 'rawvideo', '-pix_fmt', 'yuv420p', RECORD_OUTPUT]
+        elif RECORD_HLS:
+          hls_time = os.getenv("RECORD_HLS_TIME", "2")
+          hls_list_size = os.getenv("RECORD_HLS_LIST_SIZE", "10")
+          ffmpeg_args += [
+            '-g', str(max(1, int(capture_fps))),  # Keyframe interval for HLS segmenting
+            '-f', 'hls',
+            '-hls_time', hls_time,
+            '-hls_list_size', hls_list_size,
+            '-hls_flags', 'delete_segments+append_list',
+            RECORD_OUTPUT,
+          ]
+        elif RECORD_FRAG_MP4:
+          ffmpeg_args += [
+            '-g', str(max(1, int(capture_fps))),
+            '-f', 'mp4',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            RECORD_OUTPUT,
+          ]
+        else:
+          ffmpeg_args += ['-f', 'mp4', RECORD_OUTPUT]
         self._ffmpeg_proc = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
 
       rl.set_target_fps(fps)
@@ -535,12 +569,13 @@ class GuiApplication:
           pass
 
         if RECORD:
-          image = rl.load_image_from_texture(self._render_texture.texture)
-          data_size = image.width * image.height * 4
-          data = bytes(rl.ffi.buffer(image.data, data_size))
-          self._ffmpeg_proc.stdin.write(data)
-          self._ffmpeg_proc.stdin.flush()
-          rl.unload_image(image)
+          if RECORD_SKIP <= 0 or self._frame % (RECORD_SKIP + 1) == 0:
+            image = rl.load_image_from_texture(self._render_texture.texture)
+            data_size = image.width * image.height * 4
+            data = bytes(rl.ffi.buffer(image.data, data_size))
+            self._ffmpeg_proc.stdin.write(data)
+            self._ffmpeg_proc.stdin.flush()
+            rl.unload_image(image)
 
         self._monitor_fps()
         self._frame += 1

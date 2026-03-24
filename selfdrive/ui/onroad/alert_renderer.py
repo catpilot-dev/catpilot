@@ -1,3 +1,4 @@
+import os
 import time
 import pyray as rl
 from dataclasses import dataclass
@@ -96,7 +97,8 @@ class AlertRenderer(Widget):
         return ALERT_STARTUP_PENDING
 
       # 2. Lost communication with selfdriveState after receiving it
-      if TICI and not waiting_for_startup:
+      #    Skipped in replay/RECORD mode — selfdriveState gaps are expected
+      if TICI and not waiting_for_startup and not os.getenv("RECORD"):
         ss_missing = time.monotonic() - sm.recv_time['selfdriveState']
         if ss_missing > SELFDRIVE_STATE_TIMEOUT:
           if ss.enabled and (ss_missing - SELFDRIVE_STATE_TIMEOUT) < SELFDRIVE_UNRESPONSIVE_TIMEOUT:
