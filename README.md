@@ -3,14 +3,12 @@
 <h1>catpilot</h1>
 
 <p>
-  <b>A lightweight plugin framework for <a href="https://github.com/commaai/openpilot">openpilot</a>.</b>
+  <b>A plugin framework for <a href="https://github.com/commaai/openpilot">openpilot</a>.</b>
   <br>
   Extend your comma device with plugins — no fork maintenance required.
 </p>
 
 <h3>
-  <a href="https://catpilot.dev">Website</a>
-  <span> · </span>
   <a href="https://github.com/catpilot-dev/plugins">Plugins</a>
   <span> · </span>
   <a href="https://github.com/catpilot-dev/connect">Connect on Device</a>
@@ -24,22 +22,69 @@ Install: `installer.comma.ai/catpilot-dev/catpilot`
 
 ## What is catpilot?
 
-catpilot is stock openpilot with a thin plugin layer on top. The openpilot code you know is untouched — catpilot only adds hook points that let plugins extend behavior at runtime.
+catpilot is stock openpilot with a thin plugin layer on top. The openpilot code is untouched — catpilot only adds hook call sites that let plugins extend behavior at runtime. Upgrading to a new openpilot release means rebasing 5 commits.
 
-**What's different from stock openpilot:**
-- `selfdrive/plugins/` — plugin runtime (hook dispatch, registry, manifest loader)
-- `cereal/custom.capnp` — schema extensions for plugin data
-- That's it. Everything else is upstream openpilot.
+**What catpilot adds to stock openpilot:**
 
-**What plugins can do:**
-- Adjust cruise speed for curves, speed limits, or map data
-- Add car-specific support (BMW, etc.) without forking opendbc/panda
-- Customize the on-device UI overlay
-- Manage device compatibility patches (e.g., Comma 3 on newer openpilot)
+| Commit | What it adds |
+|--------|-------------|
+| Brand as catpilot | Welcome screen, device paths, repo references |
+| C3 hardware | AR0231 sensor driver, Venus firmware wait, LogReader recovery |
+| Plugin framework | `selfdrive/plugins/` — hook dispatch, registry, manifest loader, plugin bus |
+| UI layout | Settings sidebar reorder, home screen widget hooks |
+| Screen capture | Render texture on device, `ui.pre_end_drawing` hook |
 
-**Companion projects:**
-- [catpilot-dev/plugins](https://github.com/catpilot-dev/plugins) — plugin packages and installer
-- [catpilot-dev/connect](https://github.com/catpilot-dev/connect) — on-device web UI for route browsing, dashcam, telemetry, and plugin management
+Everything else is upstream openpilot.
+
+## Architecture
+
+catpilot inserts lightweight hook call sites into openpilot's control loop, planner, UI, and manager. Each hook follows a fail-safe pattern: if a plugin callback raises an exception, the default value is returned and other plugins continue running.
+
+Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpilot-dev/plugins)) and are installed to `/data/plugins-runtime/` on the device. Zero file overlays — all customization happens through hooks.
+
+### Hook Call Sites
+
+#### Controls & Planning
+| Hook | Location | Description |
+|------|----------|-------------|
+| `controls.curvature_correction` | controlsd.py | Adjust steering curvature (lane centering) |
+| `controls.post_actuators` | controlsd.py | Post-process actuators (e.g. vTarget override) |
+| `planner.subscriptions` | plannerd.py | Add cereal services to planner |
+| `planner.v_cruise` | longitudinal_planner.py | Modify target cruise speed |
+| `planner.accel_limits` | longitudinal_planner.py | Adjust acceleration limits |
+
+#### Lane Change
+| Hook | Location | Description |
+|------|----------|-------------|
+| `desire.pre_lane_change` | desire_helper.py | Pre-state-machine hook |
+| `desire.post_lane_change` | desire_helper.py | Post-state-machine trigger detection |
+| `desire.post_update` | desire_helper.py | Modify lane change desire signals |
+
+#### Car & Device
+| Hook | Location | Description |
+|------|----------|-------------|
+| `car.cruise_initialized` | card.py | Called when cruise control engages |
+| `torqued.allowed_cars` | torqued.py | Extend cars allowed for steering learning |
+| `device.health_check` | plugin-defined | Device health monitoring |
+| `manager.startup` | plugin-defined | Manager initialization |
+
+#### UI
+| Hook | Location | Description |
+|------|----------|-------------|
+| `ui.settings_extend` | settings.py | Add custom settings panels |
+| `ui.home_extend` | home.py | Add home screen widgets |
+| `ui.main_extend` | main.py | Customize main layout |
+| `ui.state_tick` | ui_state.py | Called every UI state update |
+| `ui.state_subscriptions` | ui_state.py | Add cereal subscriptions to UI |
+| `ui.software_settings_extend` | software.py | Add items to software panel |
+| `ui.network_settings_extend` | settings.py | Customize network settings |
+| `ui.onroad_exp_button` | hud_renderer.py | Customize experimental mode button |
+| `ui.hud_set_speed_override` | hud_renderer.py | Override HUD speed display |
+| `ui.hud_speed_color` | hud_renderer.py | Customize speed indicator color |
+| `ui.render_overlay` | augmented_road_view.py | Draw on onroad view |
+| `ui.pre_end_drawing` | application.py | Draw before frame ends (screen capture) |
+| `ui.vehicle_settings` | plugin-defined | Populate vehicle settings |
+| `ui.connectivity_check` | sidebar.py | Report connectivity to sidebar |
 
 ## Supported Devices
 
@@ -51,7 +96,7 @@ catpilot is stock openpilot with a thin plugin layer on top. The openpilot code 
 
 *\* comma three support enabled by [c3_compat](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) plugin.*
 
-## Installation URL
+## Installation
 
 ```
 installer.comma.ai/catpilot-dev/catpilot
@@ -59,106 +104,11 @@ installer.comma.ai/catpilot-dev/catpilot
 
 On first boot, catpilot automatically sets up plugins and connect on device.
 
----
+## Companion Projects
 
-## Upstream openpilot README
+- [catpilot-dev/plugins](https://github.com/catpilot-dev/plugins) — plugin packages and installer
+- [catpilot-dev/connect](https://github.com/catpilot-dev/connect) — on-device web UI for route browsing and plugin management
 
-<div align="center" style="text-align: center;">
+## License
 
-<h1>openpilot</h1>
-
-<p>
-  <b>openpilot is an operating system for robotics.</b>
-  <br>
-  Currently, it upgrades the driver assistance system in 300+ supported cars.
-</p>
-
-<h3>
-  <a href="https://docs.comma.ai">Docs</a>
-  <span> · </span>
-  <a href="https://docs.comma.ai/contributing/roadmap/">Roadmap</a>
-  <span> · </span>
-  <a href="https://github.com/commaai/openpilot/blob/master/docs/CONTRIBUTING.md">Contribute</a>
-  <span> · </span>
-  <a href="https://discord.comma.ai">Community</a>
-  <span> · </span>
-  <a href="https://comma.ai/shop">Try it on a comma 3X</a>
-</h3>
-
-Quick start: `bash <(curl -fsSL openpilot.comma.ai)`
-
-[![openpilot tests](https://github.com/commaai/openpilot/actions/workflows/tests.yaml/badge.svg)](https://github.com/commaai/openpilot/actions/workflows/tests.yaml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![X Follow](https://img.shields.io/twitter/follow/comma_ai)](https://x.com/comma_ai)
-[![Discord](https://img.shields.io/discord/469524606043160576)](https://discord.comma.ai)
-
-</div>
-
-<table>
-  <tr>
-    <td><a href="https://youtu.be/NmBfgOanCyk" title="Video By Greer Viau"><img src="https://github.com/commaai/openpilot/assets/8762862/2f7112ae-f748-4f39-b617-fabd689c3772"></a></td>
-    <td><a href="https://youtu.be/VHKyqZ7t8Gw" title="Video By Logan LeGrand"><img src="https://github.com/commaai/openpilot/assets/8762862/92351544-2833-40d7-9e0b-7ef7ae37ec4c"></a></td>
-    <td><a href="https://youtu.be/SUIZYzxtMQs" title="A drive to Taco Bell"><img src="https://github.com/commaai/openpilot/assets/8762862/05ceefc5-2628-439c-a9b2-89ce77dc6f63"></a></td>
-  </tr>
-</table>
-
-
-Using openpilot in a car
-------
-
-To use openpilot in a car, you need four things:
-1. **Supported Device:** a comma 3X, available at [comma.ai/shop](https://comma.ai/shop/comma-3x).
-2. **Software:** The setup procedure for the comma 3X allows users to enter a URL for custom software. Use the URL `openpilot.comma.ai` to install the release version.
-3. **Supported Car:** Ensure that you have one of [the 275+ supported cars](docs/CARS.md).
-4. **Car Harness:** You will also need a [car harness](https://comma.ai/shop/car-harness) to connect your comma 3X to your car.
-
-We have detailed instructions for [how to install the harness and device in a car](https://comma.ai/setup). Note that it's possible to run openpilot on [other hardware](https://blog.comma.ai/self-driving-car-for-free/), although it's not plug-and-play.
-
-To start developing openpilot
-------
-
-openpilot is developed by [comma](https://comma.ai/) and by users like you. We welcome both pull requests and issues on [GitHub](http://github.com/commaai/openpilot).
-
-* Join the [community Discord](https://discord.comma.ai)
-* Check out [the contributing docs](docs/CONTRIBUTING.md)
-* Check out the [openpilot tools](tools/)
-* Code documentation lives at https://docs.comma.ai
-* Information about running openpilot lives on the [community wiki](https://github.com/commaai/openpilot/wiki)
-
-Want to get paid to work on openpilot? [comma is hiring](https://comma.ai/jobs#open-positions) and offers lots of [bounties](https://comma.ai/bounties) for external contributors.
-
-Safety and Testing
-----
-
-* openpilot observes [ISO26262](https://en.wikipedia.org/wiki/ISO_26262) guidelines, see [SAFETY.md](docs/SAFETY.md) for more details.
-* openpilot has software-in-the-loop [tests](.github/workflows/tests.yaml) that run on every commit.
-* The code enforcing the safety model lives in panda and is written in C, see [code rigor](https://github.com/commaai/panda#code-rigor) for more details.
-* panda has software-in-the-loop [safety tests](https://github.com/commaai/panda/tree/master/tests/safety).
-* Internally, we have a hardware-in-the-loop Jenkins test suite that builds and unit tests the various processes.
-* panda has additional hardware-in-the-loop [tests](https://github.com/commaai/panda/blob/master/Jenkinsfile).
-* We run the latest openpilot in a testing closet containing 10 comma devices continuously replaying routes.
-
-<details>
-<summary>MIT Licensed</summary>
-
-openpilot is released under the MIT license. Some parts of the software are released under other licenses as specified.
-
-Any user of this software shall indemnify and hold harmless Comma.ai, Inc. and its directors, officers, employees, agents, stockholders, affiliates, subcontractors and customers from and against all allegations, claims, actions, suits, demands, damages, liabilities, obligations, losses, settlements, judgments, costs and expenses (including without limitation attorneys’ fees and costs) which arise out of, relate to or result from any use of this software by user.
-
-**THIS IS ALPHA QUALITY SOFTWARE FOR RESEARCH PURPOSES ONLY. THIS IS NOT A PRODUCT.
-YOU ARE RESPONSIBLE FOR COMPLYING WITH LOCAL LAWS AND REGULATIONS.
-NO WARRANTY EXPRESSED OR IMPLIED.**
-</details>
-
-<details>
-<summary>User Data and comma Account</summary>
-
-By default, openpilot uploads the driving data to our servers. You can also access your data through [comma connect](https://connect.comma.ai/). We use your data to train better models and improve openpilot for everyone.
-
-openpilot is open source software: the user is free to disable data collection if they wish to do so.
-
-openpilot logs the road-facing cameras, CAN, GPS, IMU, magnetometer, thermal sensors, crashes, and operating system logs.
-The driver-facing camera and microphone are only logged if you explicitly opt-in in settings.
-
-By using openpilot, you agree to [our Privacy Policy](https://comma.ai/privacy). You understand that use of this software or its related services will generate certain types of user data, which may be logged and stored at the sole discretion of comma. By accepting this agreement, you grant an irrevocable, perpetual, worldwide right to comma for the use of this data.
-</details>
+MIT — see [LICENSE](LICENSE) for details.

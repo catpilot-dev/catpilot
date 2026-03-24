@@ -1,3 +1,12 @@
+catpilot 0.10.3 (2026-03-14)
+========================
+* openpilot fork with plugin framework for extensibility
+* 26 hook extension points across controls, planner, UI, and vehicle
+* BMW E9x/E8x support (3-Series, 1-Series, X1 2006-2013)
+* Conditional speed control (OSM + vision + road type inference)
+* Lane centering correction for turns
+* Based on openpilot 0.10.3
+
 Version 0.10.3 (2025-12-17)
 ========================
 * New driving model #36249
