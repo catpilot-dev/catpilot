@@ -5,6 +5,7 @@ from cereal import messaging, car
 from dataclasses import dataclass, field
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.params import Params
+from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.locationd.calibrationd import HEIGHT_INIT
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
@@ -71,10 +72,16 @@ class ModelRenderer(Widget):
       stops=[],
     )
 
+    self._camera_frame_id: int = 0
+    self._frame_sync_log_count: int = 0
+
     # Get longitudinal control setting from car parameters
     if car_params := Params().get("CarParams"):
       cp = messaging.log_from_bytes(car_params, car.CarParams)
       self._longitudinal_control = cp.openpilotLongitudinalControl
+
+  def set_camera_frame_id(self, frame_id: int):
+    self._camera_frame_id = frame_id
 
   def set_transform(self, transform: np.ndarray):
     self._car_space_transform = transform.astype(np.float32)
@@ -106,6 +113,13 @@ class ModelRenderer(Widget):
     radar_state = sm['radarState'] if sm.valid['radarState'] else None
     lead_one = radar_state.leadOne if radar_state else None
     render_lead_indicator = self._longitudinal_control and radar_state is not None
+
+    # Log frame sync diagnostic (first 200 updates, then every 200th)
+    if self._camera_frame_id > 0 and model.frameId > 0:
+      delta = self._camera_frame_id - model.frameId
+      self._frame_sync_log_count += 1
+      if self._frame_sync_log_count <= 200 or self._frame_sync_log_count % 200 == 0:
+        print(f"frame_sync cam={self._camera_frame_id} model={model.frameId} delta={delta}", flush=True)
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
