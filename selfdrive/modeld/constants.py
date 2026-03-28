@@ -63,6 +63,8 @@ class ModelConstants:
 
   POLY_PATH_DEGREE = 4
 
+  LAT_SMOOTH_SECONDS = 0.0
+
 # model outputs slices
 class Plan:
   POSITION = slice(0, 3)

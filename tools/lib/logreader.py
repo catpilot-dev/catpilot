@@ -114,6 +114,20 @@ class _LogFileReader:
       for e in ents:
         self._ents.append(CachedEventReader(e))
     except capnp.KjException:
+      # Corruption mid-stream: scan forward to recover remaining events
+      consumed = sum(len(e._evt.as_builder().to_bytes()) for e in self._ents)
+      remaining = dat[consumed:]
+      import struct
+      for off in range(8, min(len(remaining), 1 << 20), 8):
+        seg_count, seg_size = struct.unpack_from('<II', remaining, off)
+        if seg_count != 0 or not (4 <= seg_size <= 131072):
+          continue
+        try:
+          for e in capnp_log.Event.read_multiple_bytes(remaining[off:]):
+            self._ents.append(CachedEventReader(e))
+          break
+        except capnp.KjException:
+          continue
       warnings.warn("Corrupted events detected", RuntimeWarning, stacklevel=1)
 
     if sort_by_time:

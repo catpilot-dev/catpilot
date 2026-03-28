@@ -42,9 +42,19 @@ assert arch in [
 pkg_names = ['bzip2', 'capnproto', 'eigen', 'ffmpeg', 'libjpeg', 'libyuv', 'ncurses', 'zeromq', 'zstd']
 pkgs = [importlib.import_module(name) for name in pkg_names]
 
+# Prepend the capnproto package's bin dir so `capnpc` used to regenerate .capnp.h
+# files matches the library version. Without this the system capnpc (which may be a
+# different version) is used, causing "version mismatch" compile errors.
+capnproto_pkg = pkgs[pkg_names.index('capnproto')]
+_capnproto_bin = getattr(capnproto_pkg, 'BIN_DIR',
+                         os.path.join(os.path.dirname(capnproto_pkg.LIB_DIR), 'bin'))
+_build_path = _capnproto_bin + os.pathsep + os.environ['PATH']
+
+_capnpc_bin = os.path.join(_capnproto_bin, 'capnpc')
+
 env = Environment(
   ENV={
-    "PATH": os.environ['PATH'],
+    "PATH": _build_path,
     "PYTHONPATH": Dir("#").abspath + ':' + Dir(f"#third_party/acados").abspath,
     "ACADOS_SOURCE_DIR": Dir("#third_party/acados").abspath,
     "ACADOS_PYTHON_INTERFACE_PATH": Dir("#third_party/acados/acados_template").abspath,
@@ -175,6 +185,8 @@ else:
 np_version = SCons.Script.Value(np.__version__)
 Export('envCython', 'np_version')
 
+env['CAPNPC'] = _capnpc_bin
+
 Export('env', 'arch')
 
 # Setup cache dir
@@ -195,7 +207,6 @@ Export('common')
 env_swaglog = env.Clone()
 env_swaglog['CXXFLAGS'].append('-DSWAGLOG="\\"common/swaglog.h\\""')
 SConscript(['msgq_repo/SConscript'], exports={'env': env_swaglog})
-SConscript(['opendbc_repo/SConscript'], exports={'env': env_swaglog})
 
 SConscript(['cereal/SConscript'])
 

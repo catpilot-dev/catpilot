@@ -26,7 +26,7 @@ void msgq_to_zmq(const std::vector<std::string> &endpoints, const std::string &i
 
 void zmq_to_msgq(const std::vector<std::string> &endpoints, const std::string &ip) {
   auto poller = std::make_unique<BridgeZmqPoller>();
-  auto pub_context = std::make_unique<Context>();
+  auto pub_context = std::unique_ptr<Context>(Context::create());
   auto sub_context = std::make_unique<BridgeZmqContext>();
   std::map<BridgeZmqSubSocket *, PubSocket *> sub2pub;
 

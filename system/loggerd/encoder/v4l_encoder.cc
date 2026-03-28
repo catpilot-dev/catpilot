@@ -2,6 +2,7 @@
 #include <string>
 #include <sys/ioctl.h>
 #include <poll.h>
+#include <unistd.h>
 
 #include "system/loggerd/encoder/v4l_encoder.h"
 #include "common/util.h"
@@ -145,14 +146,31 @@ void V4LEncoder::dequeue_handler(V4LEncoder *e) {
 
 V4LEncoder::V4LEncoder(const EncoderInfo &encoder_info, int in_width, int in_height)
     : VideoEncoder(encoder_info, in_width, in_height) {
-  fd = HANDLE_EINTR(open("/dev/v4l/by-path/platform-aa00000.qcom_vidc-video-index1", O_RDWR|O_NONBLOCK));
-  assert(fd >= 0);
-
+  // Wait for Venus firmware to be ready — the VIDC device node exists before
+  // firmware is loaded, but ioctls fail if we open too early.  Retry with
+  // backoff to survive the boot-time race.
+  const char *dev_path = "/dev/v4l/by-path/platform-aa00000.qcom_vidc-video-index1";
   struct v4l2_capability cap;
-  util::safe_ioctl(fd, VIDIOC_QUERYCAP, &cap, "VIDIOC_QUERYCAP failed");
+  for (int attempt = 0;; ++attempt) {
+    fd = HANDLE_EINTR(open(dev_path, O_RDWR|O_NONBLOCK));
+    if (fd >= 0) {
+      int ret = ioctl(fd, VIDIOC_QUERYCAP, &cap);
+      if (ret == 0 &&
+          strcmp((const char *)cap.driver, "msm_vidc_driver") == 0 &&
+          strcmp((const char *)cap.card, "msm_vidc_venc") == 0) {
+        break;  // Venus ready
+      }
+      close(fd);
+      fd = -1;
+    }
+    if (attempt >= 30) {  // ~15s total
+      LOGE("Venus encoder not ready after %d attempts, giving up", attempt);
+      assert(false);
+    }
+    LOGW("Venus encoder not ready (attempt %d), retrying in 500ms...", attempt);
+    usleep(500000);
+  }
   LOGD("opened encoder device %s %s = %d", cap.driver, cap.card, fd);
-  assert(strcmp((const char *)cap.driver, "msm_vidc_driver") == 0);
-  assert(strcmp((const char *)cap.card, "msm_vidc_venc") == 0);
 
   EncoderSettings encoder_settings = encoder_info.get_settings(in_width);
   bool is_h265 = encoder_settings.encode_type == cereal::EncodeIndex::Type::FULL_H_E_V_C;

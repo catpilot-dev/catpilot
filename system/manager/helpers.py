@@ -55,7 +55,10 @@ def save_bootlog():
   tmp = tempfile.mkdtemp()
   params_dirname = pathlib.Path(Params().get_param_path()).name
   params_dir = os.path.join(tmp, params_dirname)
-  shutil.copytree(Params().get_param_path(), params_dir, dirs_exist_ok=True)
+  try:
+    shutil.copytree(Params().get_param_path(), params_dir, dirs_exist_ok=True)
+  except (shutil.Error, OSError):
+    pass  # some param files may be unreadable; bootlog will have partial params
 
   def fn(tmpdir):
     env = os.environ.copy()

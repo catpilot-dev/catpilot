@@ -25,7 +25,9 @@ void CameraBuf::init(SpectraCamera *cam, VisionIpcServer * v, int frame_cnt, Vis
     LOGD("allocated %d buffers", frame_buf_count);
   }
 
-  vipc_server->create_buffers_with_sizes(stream_type, VIPC_BUFFER_COUNT, out_img_width, out_img_height, cam->yuv_size, cam->stride, cam->uv_offset);
+  // VENUS_BUFFER_SIZE is too small for the HW encoder on wide cameras (>1344px); use encoder-aligned size
+  size_t nv12_size = (out_img_width <= 1344 ? 2900 : 2346) * cam->stride;
+  vipc_server->create_buffers_with_sizes(stream_type, VIPC_BUFFER_COUNT, out_img_width, out_img_height, nv12_size, cam->stride, cam->uv_offset);
   LOGD("created %d YUV vipc buffers with size %dx%d", VIPC_BUFFER_COUNT, cam->stride, cam->y_height);
 }
 

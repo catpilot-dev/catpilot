@@ -19,6 +19,12 @@ from openpilot.common.swaglog import cloudlog
 
 def launcher(proc: str, name: str) -> None:
   try:
+    # reset signal handlers inherited from manager (fork copies them);
+    # without this, manager's SIGTERM handler (sys.exit(1)) fires mid-CFFI
+    # and raises SystemExit inside ffi.new(), causing SIGSEGV in raylib/pyray
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     # import the process
     mod = importlib.import_module(proc)
 
