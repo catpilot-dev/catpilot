@@ -32,31 +32,38 @@ class UIState:
 
   def _initialize(self):
     self.params = Params()
-    self.sm = messaging.SubMaster(
-      [
-        "modelV2",
-        "controlsState",
-        "onroadEvents",
-        "liveCalibration",
-        "radarState",
-        "deviceState",
-        "pandaStates",
-        "carParams",
-        "driverMonitoringState",
-        "carState",
-        "driverStateV2",
-        "roadCameraState",
-        "wideRoadCameraState",
-        "managerState",
-        "selfdriveState",
-        "longitudinalPlan",
-        "gpsLocationExternal",
-        "carOutput",
-        "carControl",
-        "liveParameters",
-        "rawAudioData",
-      ]
-    )
+    services = [
+      "modelV2",
+      "controlsState",
+      "onroadEvents",
+      "liveCalibration",
+      "radarState",
+      "deviceState",
+      "pandaStates",
+      "carParams",
+      "driverMonitoringState",
+      "carState",
+      "driverStateV2",
+      "roadCameraState",
+      "wideRoadCameraState",
+      "managerState",
+      "selfdriveState",
+      "longitudinalPlan",
+      "gpsLocationExternal",
+      "carOutput",
+      "carControl",
+      "liveParameters",
+      "rawAudioData",
+    ]
+
+    # Plugin hook: let plugins add cereal subscriptions to the UI SubMaster
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      services = hooks.run('ui.state_subscriptions', services)
+    except ImportError:
+      pass
+
+    self.sm = messaging.SubMaster(services)
 
     self.prime_state = PrimeState()
 
@@ -108,6 +115,11 @@ class UIState:
     self.sm.update(0)
     self._update_state()
     self._update_status()
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.state_tick', None, self.sm)
+    except ImportError:
+      pass
     if time.monotonic() - self._param_update_time > 5.0:
       self.update_params()
     device.update()

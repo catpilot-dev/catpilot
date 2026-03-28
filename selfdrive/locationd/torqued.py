@@ -35,6 +35,9 @@ MIN_ENGAGE_BUFFER = 2  # secs
 VERSION = 1  # bump this to invalidate old parameter caches
 ALLOWED_CARS = ['toyota', 'hyundai', 'rivian', 'honda', 'volkswagen']
 
+from openpilot.selfdrive.plugins.hooks import hooks
+ALLOWED_CARS = hooks.run('torqued.allowed_cars', ALLOWED_CARS)
+
 
 def slope2rot(slope):
   sin = np.sqrt(slope ** 2 / (slope ** 2 + 1))

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import json
+
 from cereal import car
 from openpilot.common.params import Params
 from openpilot.common.realtime import Priority, config_realtime_process
 from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.ldw import LaneDepartureWarning
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.plugins.hooks import hooks
 import cereal.messaging as messaging
 
 
@@ -16,11 +19,19 @@ def main():
   CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
   cloudlog.info("plannerd got CarParams: %s", CP.brand)
 
+  # Load plugin subscriptions from builder-generated config
+  extra_subs = []
+  try:
+    with open('/tmp/plugin_subscriptions.json') as f:
+      extra_subs = json.load(f).get('plannerd', [])
+  except (FileNotFoundError, json.JSONDecodeError):
+    pass
+
   ldw = LaneDepartureWarning()
   longitudinal_planner = LongitudinalPlanner(CP)
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance'])
-  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'liveParameters', 'radarState', 'modelV2', 'selfdriveState'],
-                           poll='modelV2')
+  services = hooks.run('planner.subscriptions', ['carControl', 'carState', 'controlsState', 'liveParameters', 'radarState', 'modelV2', 'selfdriveState'])
+  sm = messaging.SubMaster(services + extra_subs, poll='modelV2')
 
   while True:
     sm.update()

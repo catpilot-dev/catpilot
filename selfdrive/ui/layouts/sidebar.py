@@ -130,10 +130,19 @@ class Sidebar(Widget):
 
   def _update_connection_status(self, device_state):
     last_ping = device_state.lastAthenaPingTime
-    if last_ping == 0:
-      self._connect_status.update(tr_noop("CONNECT"), tr_noop("OFFLINE"), Colors.WARNING)
-    elif time.monotonic_ns() - last_ping < 80_000_000_000:  # 80 seconds in nanoseconds
+    athena_ok = last_ping != 0 and (time.monotonic_ns() - last_ping < 80_000_000_000)
+
+    # Plugin hook: allow plugins to contribute connectivity status
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      plugin_ok = hooks.run('ui.connectivity_check', False)
+    except ImportError:
+      plugin_ok = False
+
+    if athena_ok or plugin_ok:
       self._connect_status.update(tr_noop("CONNECT"), tr_noop("ONLINE"), Colors.GOOD)
+    elif last_ping == 0 and not plugin_ok:
+      self._connect_status.update(tr_noop("CONNECT"), tr_noop("OFFLINE"), Colors.WARNING)
     else:
       self._connect_status.update(tr_noop("CONNECT"), tr_noop("ERROR"), Colors.DANGER)
 
@@ -161,14 +170,14 @@ class Sidebar(Widget):
     # Settings button
     settings_down = mouse_down and rl.check_collision_point_rec(mouse_pos, SETTINGS_BTN)
     tint = Colors.BUTTON_PRESSED if settings_down else Colors.BUTTON_NORMAL
-    rl.draw_texture(self._settings_img, int(SETTINGS_BTN.x), int(SETTINGS_BTN.y), tint)
+    rl.draw_texture_ex(self._settings_img, rl.Vector2(int(SETTINGS_BTN.x), int(SETTINGS_BTN.y)), 0.0, 1.0, tint)
 
     # Home/Flag button
     flag_pressed = mouse_down and rl.check_collision_point_rec(mouse_pos, HOME_BTN)
     button_img = self._flag_img if ui_state.started else self._home_img
 
     tint = Colors.BUTTON_PRESSED if (ui_state.started and flag_pressed) else Colors.BUTTON_NORMAL
-    rl.draw_texture(button_img, int(HOME_BTN.x), int(HOME_BTN.y), tint)
+    rl.draw_texture_ex(button_img, rl.Vector2(int(HOME_BTN.x), int(HOME_BTN.y)), 0.0, 1.0, tint)
 
     # Microphone button
     if self._recording_audio:
@@ -178,8 +187,8 @@ class Sidebar(Widget):
       bg_color = rl.Color(Colors.DANGER.r, Colors.DANGER.g, Colors.DANGER.b, int(255 * 0.65)) if mic_pressed else Colors.DANGER
 
       rl.draw_rectangle_rounded(self._mic_indicator_rect, 1, 10, bg_color)
-      rl.draw_texture(self._mic_img, int(self._mic_indicator_rect.x + (self._mic_indicator_rect.width - self._mic_img.width) / 2),
-                      int(self._mic_indicator_rect.y + (self._mic_indicator_rect.height - self._mic_img.height) / 2), Colors.WHITE)
+      rl.draw_texture_ex(self._mic_img, rl.Vector2(int(self._mic_indicator_rect.x + (self._mic_indicator_rect.width - self._mic_img.width) / 2),
+                         int(self._mic_indicator_rect.y + (self._mic_indicator_rect.height - self._mic_img.height) / 2)), 0.0, 1.0, Colors.WHITE)
 
   def _draw_network_indicator(self, rect: rl.Rectangle):
     # Signal strength dots

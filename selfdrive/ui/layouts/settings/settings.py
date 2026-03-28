@@ -4,7 +4,6 @@ from enum import IntEnum
 from collections.abc import Callable
 from openpilot.selfdrive.ui.layouts.settings.developer import DeveloperLayout
 from openpilot.selfdrive.ui.layouts.settings.device import DeviceLayout
-from openpilot.selfdrive.ui.layouts.settings.firehose import FirehoseLayout
 from openpilot.selfdrive.ui.layouts.settings.software import SoftwareLayout
 from openpilot.selfdrive.ui.layouts.settings.toggles import TogglesLayout
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
@@ -16,8 +15,8 @@ from openpilot.system.ui.widgets.network import NetworkUI
 
 # Constants
 SIDEBAR_WIDTH = 500
-CLOSE_BTN_SIZE = 200
-CLOSE_ICON_SIZE = 70
+CLOSE_BTN_SIZE = 150
+CLOSE_ICON_SIZE = 55
 NAV_BTN_HEIGHT = 110
 PANEL_MARGIN = 50
 
@@ -27,6 +26,7 @@ PANEL_COLOR = rl.Color(41, 41, 41, 255)
 CLOSE_BTN_COLOR = rl.Color(41, 41, 41, 255)
 CLOSE_BTN_PRESSED = rl.Color(59, 59, 59, 255)
 TEXT_NORMAL = rl.Color(128, 128, 128, 255)
+TEXT_DISABLED = rl.Color(64, 64, 64, 255)
 TEXT_SELECTED = rl.WHITE
 
 
@@ -35,8 +35,7 @@ class PanelType(IntEnum):
   NETWORK = 1
   TOGGLES = 2
   SOFTWARE = 3
-  FIREHOSE = 4
-  DEVELOPER = 5
+  DEVELOPER = 4
 
 
 @dataclass
@@ -55,20 +54,46 @@ class SettingsLayout(Widget):
     wifi_manager = WifiManager()
     wifi_manager.set_active(False)
 
+    net_ui = NetworkUI(wifi_manager)
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.network_settings_extend', None, net_ui)
+    except ImportError:
+      pass
+
     self._panels = {
       PanelType.DEVICE: PanelInfo(tr_noop("Device"), DeviceLayout()),
-      PanelType.NETWORK: PanelInfo(tr_noop("Network"), NetworkUI(wifi_manager)),
+      PanelType.NETWORK: PanelInfo(tr_noop("Network"), net_ui),
       PanelType.TOGGLES: PanelInfo(tr_noop("Toggles"), TogglesLayout()),
       PanelType.SOFTWARE: PanelInfo(tr_noop("Software"), SoftwareLayout()),
-      PanelType.FIREHOSE: PanelInfo(tr_noop("Firehose"), FirehoseLayout()),
-      PanelType.DEVELOPER: PanelInfo(tr_noop("Developer"), DeveloperLayout()),
     }
+
+    self._panel_enabled_fns: dict[int, Callable] = {}
+    self._next_panel_key = max(int(p) for p in PanelType) + 1
 
     self._font_medium = gui_app.font(FontWeight.MEDIUM)
     self._close_icon = gui_app.texture("icons/close2.png", CLOSE_ICON_SIZE, CLOSE_ICON_SIZE)
 
     # Callbacks
     self._close_callback: Callable | None = None
+
+    # Plugin hook: let plugins add settings panels
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.settings_extend', None, self)
+    except ImportError:
+      pass
+
+    # Developer panel last (after plugin panels)
+    self._panels[PanelType.DEVELOPER] = PanelInfo(tr_noop("Developer"), DeveloperLayout())
+
+  def add_panel(self, name, widget, enabled_fn=None) -> int:
+    key = self._next_panel_key
+    self._next_panel_key += 1
+    self._panels[key] = PanelInfo(name, widget)
+    if enabled_fn:
+      self._panel_enabled_fns[key] = enabled_fn
+    return key
 
   def set_callbacks(self, on_close: Callable):
     self._close_callback = on_close
@@ -85,9 +110,9 @@ class SettingsLayout(Widget):
   def _draw_sidebar(self, rect: rl.Rectangle):
     rl.draw_rectangle_rec(rect, SIDEBAR_COLOR)
 
-    # Close button
+    # Close button (compact)
     close_btn_rect = rl.Rectangle(
-      rect.x + (rect.width - CLOSE_BTN_SIZE) / 2, rect.y + 60, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE
+      rect.x + (rect.width - CLOSE_BTN_SIZE) / 2, rect.y + 45, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE
     )
 
     pressed = (rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT) and
@@ -115,13 +140,17 @@ class SettingsLayout(Widget):
     self._close_btn_rect = close_btn_rect
 
     # Navigation buttons
-    y = rect.y + 300
+    y = rect.y + 220
     for panel_type, panel_info in self._panels.items():
       button_rect = rl.Rectangle(rect.x + 50, y, rect.width - 150, NAV_BTN_HEIGHT)
 
+      # Check if panel is disabled via enabled_fn
+      enabled_fn = self._panel_enabled_fns.get(panel_type)
+      panel_disabled = enabled_fn is not None and not enabled_fn()
+
       # Button styling
-      is_selected = panel_type == self._current_panel
-      text_color = TEXT_SELECTED if is_selected else TEXT_NORMAL
+      is_selected = panel_type == self._current_panel and not panel_disabled
+      text_color = TEXT_SELECTED if is_selected else (TEXT_DISABLED if panel_disabled else TEXT_NORMAL)
       # Draw button text (right-aligned)
       panel_name = tr(panel_info.name)
       text_size = measure_text_cached(self._font_medium, panel_name, 65)
@@ -155,6 +184,9 @@ class SettingsLayout(Widget):
     # Check navigation buttons
     for panel_type, panel_info in self._panels.items():
       if rl.check_collision_point_rec(mouse_pos, panel_info.button_rect):
+        enabled_fn = self._panel_enabled_fns.get(panel_type)
+        if enabled_fn is not None and not enabled_fn():
+          return
         self.set_current_panel(panel_type)
         return
 

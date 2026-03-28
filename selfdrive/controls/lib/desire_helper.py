@@ -1,6 +1,7 @@
 from cereal import log
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.selfdrive.plugins.hooks import hooks
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -48,6 +49,9 @@ class DesireHelper:
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < LANE_CHANGE_SPEED_MIN
+
+    # Plugin hook: pre-state-machine (e.g. consecutive lane change gap countdown)
+    hooks.run('desire.pre_lane_change', None, self, carstate)
 
     if not lateral_active or self.lane_change_timer > LANE_CHANGE_TIME_MAX:
       self.lane_change_state = LaneChangeState.off
@@ -104,9 +108,16 @@ class DesireHelper:
     else:
       self.lane_change_timer += DT_MDL
 
+    # Plugin hook: post-state-machine (e.g. consecutive lane change trigger detection)
+    hooks.run('desire.post_lane_change', None, self, carstate, one_blinker, below_lane_change_speed, lane_change_prob)
+
     self.prev_one_blinker = one_blinker
 
     self.desire = DESIRES[self.lane_change_direction][self.lane_change_state]
+
+    # Plugin hook: allow plugins to modify desire (lane change extensions)
+    self.desire = hooks.run('desire.post_update', self.desire, self.lane_change_state,
+                            self.lane_change_direction, carstate)
 
     # Send keep pulse once per second during LaneChangeStart.preLaneChange
     if self.lane_change_state in (LaneChangeState.off, LaneChangeState.laneChangeStarting):

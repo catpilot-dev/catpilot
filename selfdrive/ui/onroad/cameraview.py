@@ -85,6 +85,7 @@ class CameraView(Widget):
     self._texture1_loc: int = rl.get_shader_location(self.shader, "texture1") if not TICI else -1
 
     self.frame: VisionBuf | None = None
+    self.frame_id: int = 0  # Current displayed frame ID (for model sync)
     self.texture_y: rl.Texture | None = None
     self.texture_uv: rl.Texture | None = None
 
@@ -192,6 +193,7 @@ class CameraView(Widget):
     if buffer:
       self._texture_needs_update = True
       self.frame = buffer
+      self.frame_id = self.client.frame_id
     elif not self.client.is_connected():
       # ensure we clear the displayed frame when the connection is lost
       self.frame = None

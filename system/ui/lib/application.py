@@ -8,12 +8,10 @@ import sys
 import pyray as rl
 import threading
 import platform
-import subprocess
 from contextlib import contextmanager
 from collections.abc import Callable
 from collections import deque
 from enum import StrEnum
-from pathlib import Path
 from typing import NamedTuple
 from importlib.resources import as_file, files
 from openpilot.common.swaglog import cloudlog
@@ -38,12 +36,6 @@ SCALE = float(os.getenv("SCALE", "1.0"))
 GRID_SIZE = int(os.getenv("GRID", "0"))
 PROFILE_RENDER = int(os.getenv("PROFILE_RENDER", "0"))
 PROFILE_STATS = int(os.getenv("PROFILE_STATS", "100"))  # Number of functions to show in profile output
-RECORD = os.getenv("RECORD") == "1"
-RECORD_OUTPUT = str(Path(os.getenv("RECORD_OUTPUT", "output")).with_suffix(".mp4"))
-RECORD_QUALITY = int(os.getenv("RECORD_QUALITY", "23"))  # Dynamic bitrate quality level (CRF); 0 is lossless (bigger size), max is 51, default is 23 for x264
-RECORD_BITRATE = os.getenv("RECORD_BITRATE", "")  # Target bitrate e.g. "2000k" (overrides RECORD_QUALITY when set)
-RECORD_SPEED = int(os.getenv("RECORD_SPEED", "1"))  # Speed multiplier
-OFFSCREEN = os.getenv("OFFSCREEN") == "1"  # Disable FPS limiting for fast offline rendering
 
 GL_VERSION = """
 #version 300 es
@@ -210,10 +202,6 @@ class GuiApplication:
 
     self._render_texture: rl.RenderTexture | None = None
     self._burn_in_shader: rl.Shader | None = None
-    self._ffmpeg_proc: subprocess.Popen | None = None
-    self._ffmpeg_queue: queue.Queue | None = None
-    self._ffmpeg_thread: threading.Thread | None = None
-    self._ffmpeg_stop_event: threading.Event | None = None
     self._textures: dict[str, rl.Texture] = {}
     self._target_fps: int = _DEFAULT_FPS
     self._last_fps_log_time: float = time.monotonic()
@@ -256,6 +244,11 @@ class GuiApplication:
   def target_fps(self):
     return self._target_fps
 
+  def set_target_fps(self, fps: int):
+    if fps != self._target_fps:
+      rl.set_target_fps(fps)
+      self._target_fps = fps
+
   def request_close(self):
     self._window_close_requested = True
 
@@ -274,46 +267,14 @@ class GuiApplication:
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
 
-      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
+      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or not PC
       if self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if needs_render_texture:
         self._render_texture = rl.load_render_texture(self._width, self._height)
         rl.set_texture_filter(self._render_texture.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
 
-      if RECORD:
-        output_fps = fps * RECORD_SPEED
-        ffmpeg_args = [
-          'ffmpeg',
-          '-v', 'warning',          # Reduce ffmpeg log spam
-          '-nostats',               # Suppress encoding progress
-          '-f', 'rawvideo',         # Input format
-          '-pix_fmt', 'rgba',       # Input pixel format
-          '-s', f'{self._width}x{self._height}',  # Input resolution
-          '-r', str(fps),           # Input frame rate
-          '-i', 'pipe:0',           # Input from stdin
-          '-vf', 'vflip,format=yuv420p',  # Flip vertically and convert to yuv420p
-          '-r', str(output_fps),    # Output frame rate (for speed multiplier)
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-crf', str(RECORD_QUALITY)
-        ]
-        if RECORD_BITRATE:
-          # NOTE: custom bitrate overrides crf setting
-          ffmpeg_args += ['-b:v', RECORD_BITRATE, '-maxrate', RECORD_BITRATE, '-bufsize', RECORD_BITRATE]
-        ffmpeg_args += [
-          '-y',                     # Overwrite existing file
-          '-f', 'mp4',              # Output format
-          RECORD_OUTPUT,            # Output file path
-        ]
-        self._ffmpeg_proc = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
-        self._ffmpeg_queue = queue.Queue(maxsize=60)  # Buffer up to 60 frames
-        self._ffmpeg_stop_event = threading.Event()
-        self._ffmpeg_thread = threading.Thread(target=self._ffmpeg_writer_thread, daemon=True)
-        self._ffmpeg_thread.start()
-
-      # OFFSCREEN disables FPS limiting for fast offline rendering (e.g. clips)
-      rl.set_target_fps(0 if OFFSCREEN else fps)
+      rl.set_target_fps(fps)
 
       self._target_fps = fps
       self._set_styles()
@@ -504,22 +465,6 @@ class GuiApplication:
     rl.unload_image(image)
     return texture
 
-  def close_ffmpeg(self):
-    if self._ffmpeg_thread is not None:
-      # Signal thread to stop, send sentinel, then wait for it to drain
-      self._ffmpeg_stop_event.set()
-      self._ffmpeg_queue.put(None)
-      self._ffmpeg_thread.join(timeout=30)
-
-    if self._ffmpeg_proc is not None:
-      self._ffmpeg_proc.stdin.flush()
-      self._ffmpeg_proc.stdin.close()
-      try:
-        self._ffmpeg_proc.wait(timeout=30)
-      except subprocess.TimeoutExpired:
-        self._ffmpeg_proc.terminate()
-        self._ffmpeg_proc.wait()
-
   def close(self):
     if not rl.is_window_ready():
       return
@@ -542,8 +487,6 @@ class GuiApplication:
 
     if not PC:
       self._mouse.stop()
-
-    self.close_ffmpeg()
 
     rl.close_window()
 
@@ -622,14 +565,19 @@ class GuiApplication:
         if self._grid_size > 0:
           self._draw_grid()
 
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.pre_end_drawing', None)
+        except ImportError:
+          pass
+
         rl.end_drawing()
 
-        if RECORD:
-          image = rl.load_image_from_texture(self._render_texture.texture)
-          data_size = image.width * image.height * 4
-          data = bytes(rl.ffi.buffer(image.data, data_size))
-          self._ffmpeg_queue.put(data)  # Async write via background thread
-          rl.unload_image(image)
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.post_end_drawing', None)
+        except ImportError:
+          pass
 
         self._monitor_fps()
         self._frame += 1
@@ -735,7 +683,6 @@ class GuiApplication:
     # Strict mode: terminate UI if FPS drops too much
     if STRICT_MODE and fps < self._target_fps * FPS_CRITICAL_THRESHOLD:
       cloudlog.error(f"FPS dropped critically below {fps}. Shutting down UI.")
-      self.close_ffmpeg()
       os._exit(1)
 
   def _draw_touch_points(self):

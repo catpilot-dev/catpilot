@@ -83,14 +83,23 @@ class AugmentedRoadView(CameraView):
     # Render the base camera view
     super()._render(rect)
 
+    # Pass camera frame_id to model renderer for sync diagnostics
+    self.model_renderer.set_camera_frame_id(self.frame_id)
+
     # Draw all UI overlays
     self.model_renderer.render(self._content_rect)
     self._hud_renderer.render(self._content_rect)
     self.alert_renderer.render(self._content_rect)
     self.driver_state_renderer.render(self._content_rect)
 
-    # Custom UI extension point - add custom overlays here
-    # Use self._content_rect for positioning within camera bounds
+    # Plugin hook: render plugin overlays (speed limit sign, temp gauge, etc.)
+    try:
+      from openpilot.selfdrive.ui.onroad.overlay_zones import clear as _clear_zones
+      from openpilot.selfdrive.plugins.hooks import hooks
+      _clear_zones()
+      hooks.run('ui.render_overlay', None, self._content_rect)
+    except ImportError:
+      pass
 
     # End clipping region
     rl.end_scissor_mode()
@@ -103,8 +112,15 @@ class AugmentedRoadView(CameraView):
     msg.uiDebug.drawTimeMillis = (time.monotonic() - start_draw) * 1000
     self._pm.send('uiDebug', msg)
 
-  def _handle_mouse_press(self, _):
+  def _handle_mouse_press(self, mouse_pos):
     if not self._hud_renderer.user_interacting() and self._click_callback is not None:
+      # Don't toggle sidebar if tap is inside a registered overlay zone
+      try:
+        from openpilot.selfdrive.ui.onroad.overlay_zones import hit_test as _zone_hit_test
+        if _zone_hit_test(mouse_pos.x, mouse_pos.y):
+          return
+      except ImportError:
+        pass
       self._click_callback()
 
   def _handle_mouse_release(self, _):

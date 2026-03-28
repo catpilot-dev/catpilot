@@ -19,6 +19,7 @@ from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
+from openpilot.selfdrive.plugins.hooks import hooks
 
 REPLAY = "REPLAY" in os.environ
 
@@ -184,6 +185,7 @@ class Car:
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode)
+      hooks.run('car.cruise_initialized', None, self.v_cruise_helper, self.CS_prev)
 
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
@@ -273,6 +275,7 @@ class Car:
 
 def main():
   config_realtime_process(4, Priority.CTRL_HIGH)
+  hooks._ensure_loaded()  # load car plugins before fingerprinting
   car = Car()
   car.card_thread()
 

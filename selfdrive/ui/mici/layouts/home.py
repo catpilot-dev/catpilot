@@ -77,7 +77,7 @@ class NetworkIcon(Widget):
       # Offset by difference in height between slashless and slash icons to make center align match
       draw_y -= (self._wifi_slash_txt.height - self._wifi_none_txt.height) / 2
 
-    rl.draw_texture(draw_net_txt, int(draw_x), int(draw_y), rl.Color(255, 255, 255, int(255 * 0.9)))
+    rl.draw_texture_ex(draw_net_txt, rl.Vector2(int(draw_x), int(draw_y)), 0.0, 1.0, rl.Color(255, 255, 255, int(255 * 0.9)))
 
 
 class MiciHomeLayout(Widget):
@@ -103,7 +103,7 @@ class MiciHomeLayout(Widget):
       self._mic_icon,
     ], spacing=18)
 
-    self._openpilot_label = UnifiedLabel("openpilot", font_size=96, font_weight=FontWeight.DISPLAY, max_width=480, wrap_text=False)
+    self._openpilot_label = UnifiedLabel("catpilot", font_size=96, font_weight=FontWeight.DISPLAY, max_width=480, wrap_text=False)
     self._version_label = UnifiedLabel("", font_size=36, font_weight=FontWeight.ROMAN, max_width=480, wrap_text=False)
     self._large_version_label = UnifiedLabel("", font_size=64, text_color=rl.GRAY, font_weight=FontWeight.ROMAN, max_width=480, wrap_text=False)
     self._date_label = UnifiedLabel("", font_size=36, text_color=rl.GRAY, font_weight=FontWeight.ROMAN, max_width=480, wrap_text=False)
