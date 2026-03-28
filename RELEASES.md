@@ -1,3 +1,9 @@
+catpilot 0.11.0 (2026-03-24)
+========================
+* Rebased on openpilot 0.11.0
+* Plugin framework, BMW E9x/E8x support, conditional speed control
+* UI recorder plugin (HLS, fragmented MP4, raw YUV output modes)
+
 Version 0.11.1 (2026-04-08)
 ========================
 * New driver monitoring model
