@@ -71,8 +71,6 @@ class SoftwareLayout(Widget):
     self._branch_btn.action_item.set_value(ui_state.params.get("UpdaterTargetBranch") or "")
     self._branch_dialog: MultiOptionDialog | None = None
 
-    self._uninstall_btn = button_item(lambda: tr("Uninstall"), lambda: tr("UNINSTALL"), callback=self._on_uninstall)
-
     # Plugin extension points
     self._plugin_items = []
     self._plugin_updaters = []
@@ -85,7 +83,6 @@ class SoftwareLayout(Widget):
       self._download_btn,
       self._install_btn,
       self._branch_btn,
-      self._uninstall_btn,
     ] + self._plugin_items, line_separator=True, spacing=0)
 
   def show_event(self):
@@ -178,14 +175,6 @@ class SoftwareLayout(Widget):
       self._waiting_for_updater = True
       self._waiting_start_ts = time.monotonic()
       os.system("pkill -SIGHUP -f system.updated.updated")
-
-  def _on_uninstall(self):
-    def handle_uninstall_confirmation(result: DialogResult):
-      if result == DialogResult.CONFIRM:
-        ui_state.params.put_bool("DoUninstall", True)
-
-    dialog = ConfirmDialog(tr("Are you sure you want to uninstall?"), tr("Uninstall"), callback=handle_uninstall_confirmation)
-    gui_app.push_widget(dialog)
 
   def _on_install_update(self):
     # Trigger reboot to install update

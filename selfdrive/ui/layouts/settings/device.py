@@ -64,6 +64,9 @@ class DeviceLayout(Widget):
                   self._on_review_training_guide, enabled=ui_state.is_offroad),
       button_item(lambda: tr("Regulatory"), lambda: tr("VIEW"), callback=self._on_regulatory, enabled=ui_state.is_offroad),
       button_item(lambda: tr("Change Language"), lambda: tr("CHANGE"), callback=self._show_language_dialog),
+      button_item(lambda: tr("Factory Reset"), lambda: tr("RESET"),
+                  lambda: tr("Erase all data and restore device to factory state. This cannot be undone."),
+                  callback=self._factory_reset_prompt, enabled=ui_state.is_offroad),
       self._power_off_btn,
     ]
     return items
@@ -192,3 +195,12 @@ class DeviceLayout(Widget):
     if not self._training_guide:
       self._training_guide = TrainingGuide()
     gui_app.push_widget(self._training_guide)
+
+  def _factory_reset_prompt(self):
+    def perform_reset(result: DialogResult):
+      if result == DialogResult.CONFIRM:
+        self._params.put_bool("DoUninstall", True)
+
+    dialog = ConfirmDialog(tr("Factory reset will erase all data on device. Continue?"),
+                           tr("Factory Reset"), callback=perform_reset)
+    gui_app.push_widget(dialog)
