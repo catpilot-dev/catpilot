@@ -60,6 +60,8 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI, DT_CTRL)
 
+    hooks.run('controls.lat_controller_init', None, self.LaC, self.CP)
+
   def update(self):
     self.sm.update(15)
     if self.sm.updated["liveCalibration"]:
