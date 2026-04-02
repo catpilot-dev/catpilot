@@ -153,10 +153,13 @@ class PluginProcessManager:
     module_file = os.path.join(plugin_dir, *module.split('.')) + '.py'
 
     # Inherit parent sys.path so child can import cereal, openpilot, etc.
-    parent_paths = [p for p in sys.path if p and p != plugin_dir]
+    # Filter out all plugin-runtime paths to avoid duplicate entries that
+    # would let bare imports create second module instances.
+    plugins_root = os.path.dirname(plugin_dir)
+    parent_paths = [p for p in sys.path if p and p != plugin_dir and not p.startswith(plugins_root + '/')]
     launcher_code = (
       f"import sys, os; "
-      f"sys.path[:0] = {[plugin_dir] + parent_paths!r}; "
+      f"sys.path[:0] = {[plugin_dir, plugins_root] + parent_paths!r}; "
       f"os.chdir({plugin_dir!r}); "
       f"os.environ['PWD'] = {plugin_dir!r}; "
       f"from setproctitle import setproctitle; "

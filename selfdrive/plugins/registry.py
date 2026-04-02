@@ -196,6 +196,13 @@ class PluginRegistry:
       return
 
     hooks_module.hooks.unregister_all(plugin_id)
+
+    # Remove plugin modules from sys.modules so a subsequent load_plugin()
+    # creates fresh instances instead of reusing stale ones.
+    prefix = f"plugins.{plugin_id}."
+    for key in [k for k in sys.modules if k.startswith(prefix)]:
+      del sys.modules[key]
+
     info.loaded = False
     info.enabled = False
     info.module = None

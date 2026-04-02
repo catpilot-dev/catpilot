@@ -1,6 +1,7 @@
 """Tests for plugin discovery, loading, and lifecycle."""
 import json
 import os
+import sys
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -112,6 +113,48 @@ class TestPluginLoading:
       registry.unload_plugin('sample')
       assert not hooks_module.hooks.has_hooks('test.hook')
       assert not registry.plugins['sample'].loaded
+    finally:
+      hooks_module.hooks = original_hooks
+
+  @patch('openpilot.selfdrive.plugins.registry.PluginRegistry.is_enabled', return_value=True)
+  def test_unload_cleans_sys_modules(self, mock_enabled, plugins_dir, sample_plugin):
+    registry = PluginRegistry(plugins_dir)
+    registry.discover()
+
+    from openpilot.selfdrive.plugins import hooks as hooks_module
+    original_hooks = hooks_module.hooks
+    hooks_module.hooks = HookRegistry()
+
+    try:
+      registry.load_plugin('sample')
+      assert 'plugins.sample.sample_mod' in sys.modules
+
+      registry.unload_plugin('sample')
+      assert 'plugins.sample.sample_mod' not in sys.modules
+    finally:
+      hooks_module.hooks = original_hooks
+
+  @patch('openpilot.selfdrive.plugins.registry.PluginRegistry.is_enabled', return_value=True)
+  def test_reload_gets_fresh_module(self, mock_enabled, plugins_dir, sample_plugin):
+    registry = PluginRegistry(plugins_dir)
+    registry.discover()
+
+    from openpilot.selfdrive.plugins import hooks as hooks_module
+    original_hooks = hooks_module.hooks
+    hooks_module.hooks = HookRegistry()
+
+    try:
+      registry.load_plugin('sample')
+      mod1 = sys.modules.get('plugins.sample.sample_mod')
+
+      registry.unload_plugin('sample')
+      registry.plugins['sample'].loaded = False
+
+      registry.load_plugin('sample')
+      mod2 = sys.modules.get('plugins.sample.sample_mod')
+
+      # Must be a fresh instance, not the stale one
+      assert mod1 is not mod2
     finally:
       hooks_module.hooks = original_hooks
 
