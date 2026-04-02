@@ -116,6 +116,75 @@ class TestPluginLoading:
       hooks_module.hooks = original_hooks
 
 
+class TestMultiHookModuleSharing:
+  """Verify that multiple hooks from the same module share one module instance."""
+
+  @pytest.fixture
+  def multi_hook_plugin(self, plugins_dir):
+    """Create a plugin with two hooks from the same module that share state."""
+    plugin_dir = os.path.join(plugins_dir, 'multi_hook')
+    os.makedirs(plugin_dir)
+
+    manifest = {
+      'id': 'multi_hook',
+      'name': 'Multi Hook Plugin',
+      'version': '1.0.0',
+      'type': 'hook',
+      'hooks': {
+        'test.set_flag': {
+          'module': 'shared_mod',
+          'function': 'on_set_flag',
+        },
+        'test.check_flag': {
+          'module': 'shared_mod',
+          'function': 'on_check_flag',
+        }
+      }
+    }
+
+    with open(os.path.join(plugin_dir, 'plugin.json'), 'w') as f:
+      json.dump(manifest, f)
+
+    with open(os.path.join(plugin_dir, 'shared_mod.py'), 'w') as f:
+      f.write(
+        "_flag = False\n"
+        "\n"
+        "def on_set_flag(value):\n"
+        "  global _flag\n"
+        "  _flag = True\n"
+        "  return value\n"
+        "\n"
+        "def on_check_flag(value):\n"
+        "  return _flag\n"
+      )
+
+    return plugin_dir
+
+  @patch('openpilot.selfdrive.plugins.registry.PluginRegistry.is_enabled', return_value=True)
+  def test_hooks_share_module_globals(self, mock_enabled, plugins_dir, multi_hook_plugin):
+    registry = PluginRegistry(plugins_dir)
+    registry.discover()
+
+    from openpilot.selfdrive.plugins import hooks as hooks_module
+    original_hooks = hooks_module.hooks
+    hooks_module.hooks = HookRegistry()
+
+    try:
+      success = registry.load_plugin('multi_hook')
+      assert success
+
+      # Flag starts False
+      assert hooks_module.hooks.run('test.check_flag', False) is False
+
+      # Set it via the other hook
+      hooks_module.hooks.run('test.set_flag', None)
+
+      # Both hooks must see the same _flag — proves shared module instance
+      assert hooks_module.hooks.run('test.check_flag', False) is True
+    finally:
+      hooks_module.hooks = original_hooks
+
+
 class TestPluginStatus:
   def test_get_status(self, plugins_dir, sample_plugin):
     registry = PluginRegistry(plugins_dir)

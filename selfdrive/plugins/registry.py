@@ -134,38 +134,45 @@ class PluginRegistry:
       return False
 
     try:
-      # Add plugin dir to sys.path for imports
-      if plugin_dir not in sys.path:
-        sys.path.insert(0, plugin_dir)
+      # Add plugins root + plugin dir to sys.path for imports
+      # (root is needed for shared config.py, plugin dir for local modules)
+      for p in (self.plugins_dir, plugin_dir):
+        if p not in sys.path:
+          sys.path.insert(0, p)
 
       # Load hook callbacks from manifest (hook, hybrid, car, firmware types)
       plugin_type = manifest['type']
       if plugin_type in ('hook', 'hybrid', 'car', 'firmware'):
+        loaded_modules: dict[str, object] = {}
         for hook_name, hook_def in manifest.get('hooks', {}).items():
           module_name = hook_def['module']
           func_name = hook_def['function']
           priority = hook_def.get('priority', 50)
 
-          # Resolve module path — support nested modules (e.g., "bmw.register")
-          module_file = os.path.join(plugin_dir, *module_name.split('.'))
-          if os.path.isdir(module_file):
-            module_file = os.path.join(module_file, '__init__.py')
-          else:
-            module_file += '.py'
-
-          # Use canonical dotted path so regular imports find the same instance
+          # Reuse already-loaded module when multiple hooks share the same file
           canonical_name = f"plugins.{plugin_id}.{module_name}"
-          spec = importlib.util.spec_from_file_location(
-            canonical_name,
-            module_file
-          )
-          if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot find module '{module_name}' in {plugin_dir}")
+          if canonical_name not in loaded_modules:
+            # Resolve module path — support nested modules (e.g., "bmw.register")
+            module_file = os.path.join(plugin_dir, *module_name.split('.'))
+            if os.path.isdir(module_file):
+              module_file = os.path.join(module_file, '__init__.py')
+            else:
+              module_file += '.py'
 
-          module = importlib.util.module_from_spec(spec)
-          sys.modules[canonical_name] = module
-          spec.loader.exec_module(module)
+            # Use canonical dotted path so regular imports find the same instance
+            spec = importlib.util.spec_from_file_location(
+              canonical_name,
+              module_file
+            )
+            if spec is None or spec.loader is None:
+              raise ImportError(f"Cannot find module '{module_name}' in {plugin_dir}")
 
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[canonical_name] = module
+            spec.loader.exec_module(module)
+            loaded_modules[canonical_name] = module
+
+          module = loaded_modules[canonical_name]
           callback = getattr(module, func_name)
           hooks_module.hooks.register(hook_name, plugin_id, callback, priority)
           info.module = module
