@@ -172,6 +172,7 @@ class PluginProcessManager:
     )
 
     log_path = self._log_file(name)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     log_fd = open(log_path, 'w')
     proc = subprocess.Popen(
       [sys.executable, '-c', launcher_code],
