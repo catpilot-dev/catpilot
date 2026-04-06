@@ -125,6 +125,7 @@ class Controls:
     lane_changing = model_v2.meta.laneChangeState != LaneChangeState.off
     lat_delay = self.sm["liveDelay"].lateralDelay + LAT_SMOOTH_SECONDS
     new_desired_curvature = hooks.run('controls.curvature_correction', new_desired_curvature, model_v2, CS.vEgo, lane_changing, lat_delay=lat_delay)
+    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
     actuators.curvature = self.desired_curvature
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
