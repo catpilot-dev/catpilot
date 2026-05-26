@@ -46,34 +46,41 @@ class UIState:
 
   def _initialize(self):
     self.params = Params()
-    self.sm = messaging.SubMaster(
-      [
-        "modelV2",
-        "controlsState",
-        "onroadEvents",
-        "extrinsicsCalibration",
-        "radarState",
-        "deviceState",
-        "pandaStates",
-        "carParams",
-        "driverMonitoringState",
-        "carState",
-        "driverStateV2",
-        "narrowRoadCameraState",
-        "wideRoadCameraState",
-        "managerState",
-        "selfdriveState",
-        "longitudinalPlan",
-        "gpsLocationExternal",
-        "gpsLocation",
-        "navInstruction",
-        "carOutput",
-        "carControl",
-        "vehicleParameters",
-        "testJoystick",
-        "rawAudioData",
-      ]
-    )
+    services = [
+      "modelV2",
+      "controlsState",
+      "onroadEvents",
+      "extrinsicsCalibration",
+      "radarState",
+      "deviceState",
+      "pandaStates",
+      "carParams",
+      "driverMonitoringState",
+      "carState",
+      "driverStateV2",
+      "narrowRoadCameraState",
+      "wideRoadCameraState",
+      "managerState",
+      "selfdriveState",
+      "longitudinalPlan",
+      "gpsLocationExternal",
+      "gpsLocation",
+      "navInstruction",
+      "carOutput",
+      "carControl",
+      "vehicleParameters",
+      "testJoystick",
+      "rawAudioData",
+    ]
+
+    # Plugin hook: let plugins add cereal subscriptions to the UI SubMaster
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      services = hooks.run('ui.state_subscriptions', services)
+    except ImportError:
+      pass
+
+    self.sm = messaging.SubMaster(services)
 
     self.prime_state = PrimeState()
 
@@ -147,6 +154,11 @@ class UIState:
     self._update_state()
     self._update_status()
     self._update_chestnut_state()
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.state_tick', None, self.sm)
+    except ImportError:
+      pass
     device.update()
 
   def _params_refresh_worker(self):

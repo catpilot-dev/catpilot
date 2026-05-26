@@ -281,6 +281,12 @@ class GuiApplication:
   def target_fps(self):
     return self._target_fps
 
+  def set_target_fps(self, fps: int):
+    # plugins (ui_mod) switch the frame rate on/offroad
+    if fps != self._target_fps:
+      rl.set_target_fps(fps)
+      self._target_fps = fps
+
   def request_close(self):
     self._window_close_requested = True
 
@@ -299,7 +305,8 @@ class GuiApplication:
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
 
-      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
+      # always render through a texture on device so plugins (screen_capture) can read the frame back
+      needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD or not PC
       if self._scale != 1.0:
         rl.set_mouse_scale(1 / self._scale, 1 / self._scale)
       if needs_render_texture:
@@ -678,7 +685,19 @@ class GuiApplication:
         if self._grid_size > 0:
           self._draw_grid()
 
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.pre_end_drawing', None)
+        except ImportError:
+          pass
+
         rl.end_drawing()
+
+        try:
+          from openpilot.selfdrive.plugins.hooks import hooks
+          hooks.run('ui.post_end_drawing', None)
+        except ImportError:
+          pass
 
         if RECORD:
           image = rl.load_image_from_texture(self._render_texture.texture)

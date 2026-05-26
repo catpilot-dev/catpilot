@@ -2,13 +2,12 @@
 import os
 import time
 
+import pyray as rl
+
 from openpilot.cereal import messaging
 from openpilot.common.hardware import COMMA_HARDWARE
 from openpilot.common.realtime import Priority, config_realtime_process, set_core_affinity
 from openpilot.system.ui.lib.application import gui_app
-from openpilot.selfdrive.ui.layouts.main import MainLayout
-from openpilot.selfdrive.ui.mici.layouts.main import MiciMainLayout
-from openpilot.selfdrive.ui.ui_state import ui_state
 
 BIG_UI = gui_app.big_ui()
 
@@ -18,7 +17,20 @@ def main():
   # above plannerd and radard
   config_realtime_process(0, Priority.CTRL_HIGH)
 
+  # Open window early so the user sees a black screen instead of nothing
+  # while heavy imports (plugins, cereal, layouts) load
   gui_app.init_window("UI")
+
+  # Render a blank frame immediately to claim the display
+  rl.begin_drawing()
+  rl.clear_background(rl.Color(0, 0, 0, 255))
+  rl.end_drawing()
+
+  # Heavy imports — triggers plugin discovery, hook loading, cereal SubMaster
+  from openpilot.selfdrive.ui.layouts.main import MainLayout
+  from openpilot.selfdrive.ui.mici.layouts.main import MiciMainLayout
+  from openpilot.selfdrive.ui.ui_state import ui_state
+
   if BIG_UI:
     MainLayout()
   else:

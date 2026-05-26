@@ -50,6 +50,14 @@ class MainLayout(Widget):
     if not self._onboarding_window.completed:
       gui_app.push_widget(self._onboarding_window)
 
+    self._default_settings_panel = PanelType.DEVICE
+
+  def set_default_settings_panel(self, key):
+    self._default_settings_panel = key
+
+  def get_home_layout(self):
+    return self._layouts[MainState.HOME]
+
   def _render(self, _):
     self._handle_onroad_transition()
     self._render_main_content()
@@ -58,7 +66,6 @@ class MainLayout(Widget):
     self._sidebar.set_callbacks(on_settings=self._on_settings_clicked,
                                 on_flag=self._on_bookmark_clicked,
                                 open_settings=lambda: self.open_settings(PanelType.TOGGLES))
-    self._layouts[MainState.HOME]._setup_widget.set_open_settings_callback(lambda: self.open_settings(PanelType.FIREHOSE))
     self._layouts[MainState.HOME].set_settings_callback(lambda: self.open_settings(PanelType.TOGGLES))
     self._layouts[MainState.SETTINGS].set_callbacks(on_close=self._set_mode_for_state)
 
@@ -67,6 +74,13 @@ class MainLayout(Widget):
 
     device.add_interactive_timeout_callback(self._set_mode_for_state)
     ui_state.add_on_body_changed_callbacks(self._on_body_changed)
+
+    # Plugin hook: let plugins customize the main layout
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      hooks.run('ui.main_extend', None, self)
+    except ImportError:
+      pass
 
   def _update_layout_rects(self):
     self._sidebar_rect = rl.Rectangle(self._rect.x, self._rect.y, SIDEBAR_WIDTH, self._rect.height)
@@ -108,7 +122,7 @@ class MainLayout(Widget):
     self._sidebar.set_visible(False)
 
   def _on_settings_clicked(self):
-    self.open_settings(PanelType.DEVICE)
+    self.open_settings(self._default_settings_panel)
 
   def _on_bookmark_clicked(self):
     for service in ('bookmarkButton', 'userBookmark'):

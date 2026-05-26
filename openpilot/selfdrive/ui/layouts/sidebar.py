@@ -128,10 +128,19 @@ class Sidebar(Widget):
 
   def _update_connection_status(self, device_state):
     last_ping = device_state.lastAthenaPingTime
-    if last_ping == 0:
-      self._connect_status.update(tr_noop("CONNECT"), tr_noop("OFFLINE"), Colors.WARNING)
-    elif time.monotonic_ns() - last_ping < 80_000_000_000:  # 80 seconds in nanoseconds
+    athena_ok = last_ping != 0 and (time.monotonic_ns() - last_ping < 80_000_000_000)
+
+    # Plugin hook: allow plugins to contribute connectivity status
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      plugin_ok = hooks.run('ui.connectivity_check', False)
+    except ImportError:
+      plugin_ok = False
+
+    if athena_ok or plugin_ok:
       self._connect_status.update(tr_noop("CONNECT"), tr_noop("ONLINE"), Colors.GOOD)
+    elif last_ping == 0 and not plugin_ok:
+      self._connect_status.update(tr_noop("CONNECT"), tr_noop("OFFLINE"), Colors.WARNING)
     else:
       self._connect_status.update(tr_noop("CONNECT"), tr_noop("ERROR"), Colors.DANGER)
 

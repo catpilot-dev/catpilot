@@ -84,8 +84,14 @@ class AugmentedRoadView(CameraView):
     self.alert_renderer.render(self._content_rect)
     self.driver_state_renderer.render(self._content_rect)
 
-    # Custom UI extension point - add custom overlays here
-    # Use self._content_rect for positioning within camera bounds
+    # Plugin hook: render plugin overlays (speed limit sign, temp gauge, etc.)
+    try:
+      from openpilot.selfdrive.ui.onroad.overlay_zones import clear as _clear_zones
+      from openpilot.selfdrive.plugins.hooks import hooks
+      _clear_zones()
+      hooks.run('ui.render_overlay', None, self._content_rect)
+    except ImportError:
+      pass
 
     # End clipping region
     rl.end_scissor_mode()
@@ -93,8 +99,15 @@ class AugmentedRoadView(CameraView):
     # Draw colored border based on driving state
     self._draw_border(rect)
 
-  def _handle_mouse_press(self, _):
+  def _handle_mouse_press(self, mouse_pos):
     if not self._hud_renderer.user_interacting() and self._click_callback is not None:
+      # Don't toggle sidebar if tap is inside a registered overlay zone
+      try:
+        from openpilot.selfdrive.ui.onroad.overlay_zones import hit_test as _zone_hit_test
+        if _zone_hit_test(mouse_pos.x, mouse_pos.y):
+          return
+      except ImportError:
+        pass
       self._click_callback()
 
   def _handle_mouse_release(self, _):

@@ -71,6 +71,12 @@ class HudRenderer(Widget):
     self._font_medium: rl.Font = gui_app.font(FontWeight.MEDIUM)
 
     self._exp_button: ExpButton = ExpButton(UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      self._exp_button = hooks.run('ui.onroad_exp_button', self._exp_button,
+                                    UI_CONFIG.button_size, UI_CONFIG.wheel_icon_size)
+    except ImportError:
+      pass
 
   def _update_state(self) -> None:
     """Update HUD state based on car state and controls state."""
@@ -136,6 +142,7 @@ class HudRenderer(Widget):
 
     max_color = COLORS.GREY
     set_speed_color = COLORS.DARK_GREY
+    set_speed_text = None
     if self.is_cruise_set:
       set_speed_color = COLORS.WHITE
       if ui_state.status == UIStatus.ENGAGED:
@@ -144,6 +151,18 @@ class HudRenderer(Widget):
         max_color = COLORS.DISENGAGED
       elif ui_state.status == UIStatus.OVERRIDE:
         max_color = COLORS.OVERRIDE
+
+      # Plugin hook: override MAX block display (e.g., speed limit ceiling)
+      # Callback returns {"max_color": rl.Color, "set_speed_color": rl.Color, "set_speed_text": str} or None
+      try:
+        from openpilot.selfdrive.plugins.hooks import hooks
+        override = hooks.run('ui.hud_set_speed_override', None, max_color, set_speed_color, self.set_speed, ui_state.is_metric)
+        if override is not None:
+          max_color = override.get("max_color", max_color)
+          set_speed_color = override.get("set_speed_color", set_speed_color)
+          set_speed_text = override.get("set_speed_text", set_speed_text)
+      except ImportError:
+        pass
 
     max_text = tr("MAX")
     max_text_width = measure_text_cached(self._font_semi_bold, max_text, FONT_SIZES.max_speed).x
@@ -156,7 +175,8 @@ class HudRenderer(Widget):
       max_color,
     )
 
-    set_speed_text = CRUISE_DISABLED_CHAR if not self.is_cruise_set else str(round(self.set_speed))
+    if set_speed_text is None:
+      set_speed_text = CRUISE_DISABLED_CHAR if not self.is_cruise_set else str(round(self.set_speed))
     speed_text_width = measure_text_cached(self._font_bold, set_speed_text, FONT_SIZES.set_speed).x
     rl.draw_text_ex(
       self._font_bold,
@@ -172,7 +192,16 @@ class HudRenderer(Widget):
     speed_text = str(round(self.speed))
     speed_text_size = measure_text_cached(self._font_bold, speed_text, FONT_SIZES.current_speed)
     speed_pos = rl.Vector2(rect.x + rect.width / 2 - speed_text_size.x / 2, 180 - speed_text_size.y / 2)
-    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, COLORS.WHITE)
+
+    # Plugin hook: override speed text color (e.g., yellow when curvature-limited)
+    speed_color = COLORS.WHITE
+    try:
+      from openpilot.selfdrive.plugins.hooks import hooks
+      speed_color = hooks.run('ui.hud_speed_color', speed_color)
+    except ImportError:
+      pass
+
+    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, speed_color)
 
     unit_text = tr("km/h") if ui_state.is_metric else tr("mph")
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
