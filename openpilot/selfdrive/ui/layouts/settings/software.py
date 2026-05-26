@@ -2,6 +2,7 @@ import subprocess
 import time
 import datetime
 from openpilot.common.time_helpers import system_time_valid
+from openpilot.selfdrive.plugins.hooks import hooks
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, trn
@@ -70,18 +71,25 @@ class SoftwareLayout(Widget):
     self._branch_btn.action_item.set_value(ui_state.params.get("UpdaterTargetBranch") or "")
     self._branch_dialog: MultiOptionDialog | None = None
 
+    # Plugin extension points
+    self._plugin_items = []
+    self._plugin_updaters = []
+    self._plugin_show_cbs = []
+    hooks.run('ui.software_settings_extend', None, self)
+
     self._scroller = Scroller([
       self._onroad_label,
       self._version_item,
       self._download_btn,
       self._install_btn,
       self._branch_btn,
-      button_item(lambda: tr("Uninstall"), lambda: tr("UNINSTALL"), callback=self._on_uninstall),
-    ], line_separator=True, spacing=0)
+    ] + self._plugin_items, line_separator=True, spacing=0)
 
   def show_event(self):
     super().show_event()
     self._scroller.show_event()
+    for cb in self._plugin_show_cbs:
+      cb()
 
   def _render(self, rect):
     self._scroller.render(rect)
@@ -151,6 +159,9 @@ class SoftwareLayout(Widget):
     else:
       self._install_btn.set_visible(False)
 
+    for updater in self._plugin_updaters:
+      updater()
+
   def _on_download_update(self):
     # Check if we should start checking or start downloading
     self._download_btn.action_item.set_enabled(False)
@@ -164,14 +175,6 @@ class SoftwareLayout(Widget):
       self._waiting_for_updater = True
       self._waiting_start_ts = time.monotonic()
       subprocess.run("pkill -SIGHUP -f openpilot.system.updated.updated", shell=True)
-
-  def _on_uninstall(self):
-    def handle_uninstall_confirmation(result: DialogResult):
-      if result == DialogResult.CONFIRM:
-        ui_state.params.put_bool("DoUninstall", True, block=True)
-
-    dialog = ConfirmDialog(tr("Are you sure you want to uninstall?"), tr("Uninstall"), callback=handle_uninstall_confirmation)
-    gui_app.push_widget(dialog)
 
   def _on_install_update(self):
     # Trigger reboot to install update
