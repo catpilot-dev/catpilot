@@ -13,3 +13,6 @@ openpilot/selfdrive/modeld/models/big_*_tinygrad.pkl filter=lfs diff=lfs merge=l
 
 openpilot/selfdrive/car/tests/test_models_segs.txt filter=lfs diff=lfs merge=lfs -text
 openpilot/common/hardware/comma/updater filter=lfs diff=lfs merge=lfs -text
+
+# README screenshots stay regular blobs (LFS pushurl is commaai read-only GitLab)
+docs/assets/catpilot_offroad.png -filter -diff -merge -text
