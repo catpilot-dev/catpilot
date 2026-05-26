@@ -53,10 +53,10 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
                           lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
   if 'action' not in model_output:
     plan = model_output['plan'][0]
-    desired_accel = get_accel_from_plan(plan[:,Plan.VELOCITY][:,0],
-                                        plan[:,Plan.ACCELERATION][:,0],
-                                        ModelConstants.T_IDXS,
-                                        action_t=long_action_t)
+    _, desired_accel = get_accel_from_plan(plan[:,Plan.VELOCITY][:,0],
+                                           plan[:,Plan.ACCELERATION][:,0],
+                                           ModelConstants.T_IDXS,
+                                           action_t=long_action_t)
     desired_curvature = get_curvature_from_plan(plan[:,Plan.T_FROM_CURRENT_EULER][:,2],
                                                 plan[:,Plan.ORIENTATION_RATE][:,2],
                                                 ModelConstants.T_IDXS,

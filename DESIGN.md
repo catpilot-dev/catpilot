@@ -41,7 +41,7 @@ Nine commits sit on top of upstream (openpilot v0.11.2). This is the entire delt
 | `feat: plugin framework` | 36 files | `openpilot/selfdrive/plugins/` (the framework itself, ~10 files + tests) plus the UI, onroad and manager hook call sites, and screen-capture/recording infrastructure |
 | `ui: Factory Reset` | 2 files | Moves Uninstall under Device as Factory Reset |
 | `controls: lateral hooks` | 2 files | Lateral hook call sites in `controlsd.py` and the `desire.post_update` hook in `desire_helper.py` |
-| `feat(planner): vTarget` | 6 files | Publishes `vTarget`, the MPC speed at the actuator delay, capped at the plugin-adjusted cruise speed (0.11.2's MPC only follows leads) |
+| `feat(planner): vTarget` | 7 files | Publishes `vTarget`, the plan speed at the actuator delay: the MPC speed capped at the plugin-adjusted cruise speed and at the speed `aTarget`'s own slope reaches (0.11.2's MPC only follows leads, and cruise is a separate `aTarget` candidate). It never implies more acceleration than `aTarget`; a set speed below `vEgo` makes it a destination |
 | `selfdrived: events_filter` | 2 files | `selfdrived.events_filter` hook at the end of `update_events`, plus its test |
 | `ui: version text` | 1 file | Drops the redundant version from the home screen when the branch name carries it |
 | `launch` | 2 files | Boot chain in `launch_chffrplus.sh` (c3_compat patches, plugin install, first boot, COD) and the comma three AGNOS 12.8 policy in `launch_env.sh` |

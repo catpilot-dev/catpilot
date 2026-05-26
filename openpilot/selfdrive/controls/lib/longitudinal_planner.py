@@ -15,6 +15,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDX
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
+from openpilot.selfdrive.plugins.hooks import hooks
 
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
@@ -66,6 +67,7 @@ class LongitudinalPlanner:
     self.v_desired_filter = FirstOrderFilter(init_v, 2.0, self.dt)
     self.a_cruise = init_a
     self.output_a_target = init_a
+    self.output_v_target = init_v
     self.output_should_stop = False
 
     self.v_desired_trajectory = np.zeros(CONTROL_N)
@@ -81,6 +83,8 @@ class LongitudinalPlanner:
     v_ego = sm['carState'].vEgo
     v_cruise_kph = min(sm['carState'].vCruise, V_CRUISE_MAX)
     v_cruise = v_cruise_kph * CV.KPH_TO_MS
+    # Plugin hook: allow plugins to modify v_cruise (speed limit enforcement, curve speed)
+    v_cruise = hooks.run('planner.v_cruise', v_cruise, v_ego, sm)
     if sm['controlsState'].forceDecel:
       v_cruise = 0.0
 
@@ -126,8 +130,8 @@ class LongitudinalPlanner:
     a_prev = self.output_a_target
 
     action_t =  self.CP.longitudinalActuatorDelay + DT_MDL
-    output_a_target_mpc = get_accel_from_plan(self.v_desired_trajectory, self.a_desired_trajectory, CONTROL_N_T_IDX,
-                                              action_t=action_t)
+    output_v_target_mpc, output_a_target_mpc = get_accel_from_plan(self.v_desired_trajectory, self.a_desired_trajectory, CONTROL_N_T_IDX,
+                                                                     action_t=action_t)
     output_should_stop_mpc = should_stop(v_ego, output_a_target_mpc)
     output_a_target_e2e = sm['modelV2'].action.desiredAcceleration
     output_should_stop_e2e = sm['modelV2'].action.shouldStop
@@ -147,6 +151,15 @@ class LongitudinalPlanner:
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+
+    # catpilot vTarget: the speed the plan wants at action_t. The MPC only follows leads (a fast fake
+    # lead when there is none), so its speed target is bounded neither by cruise speed nor by the
+    # candidate that actually wins aTarget. Cap it at the plugin-adjusted v_cruise (as the pre-0.11.2
+    # cruise-obstacle MPC did) and at the speed aTarget's own slope reaches over action_t, i.e.
+    # get_accel_from_plan's trapezoid inverted, so vTarget never implies more acceleration than aTarget.
+    # It may imply more deceleration (a set speed below vEgo is a destination); BMW DCC relies on that.
+    v_target_consistent = self.v_desired_filter.x + (self.output_a_target + a_prev) * action_t / 2.0
+    self.output_v_target = min(output_v_target_mpc, v_cruise, v_target_consistent)
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 
@@ -168,6 +181,7 @@ class LongitudinalPlanner:
     longitudinalPlan.longitudinalPlanSource = self.mpc.source
     longitudinalPlan.fcw = self.fcw
 
+    longitudinalPlan.vTarget = float(self.output_v_target)
     longitudinalPlan.aTarget = float(self.output_a_target)
     longitudinalPlan.accelBoost = float(self.accel_boost.total_boost)
     longitudinalPlan.shouldStop = bool(self.output_should_stop)
