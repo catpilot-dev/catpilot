@@ -1,6 +1,7 @@
 from openpilot.cereal import log
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.selfdrive.plugins.hooks import hooks
 
 LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
@@ -76,3 +77,7 @@ class DesireHelper:
         self.desire = log.Desire.laneChangeLeft
       elif self.lane_change_direction == LaneChangeDirection.right:
         self.desire = log.Desire.laneChangeRight
+
+    # Plugin hook: allow plugins to modify desire
+    self.desire = hooks.run('desire.post_update', self.desire, self.lane_change_state,
+                            self.lane_change_direction, carstate)
