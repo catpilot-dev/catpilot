@@ -47,7 +47,8 @@ Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpi
 #### Controls & Planning
 | Hook | Location | Description |
 |------|----------|-------------|
-| `controls.curvature_correction` | controlsd.py | Adjust steering curvature (lane centering) |
+| `controls.lat_controller_init` | controlsd.py | Replace/configure the lateral controller at init |
+| `controls.curvature_correction` | controlsd.py | Adjust steering curvature (lane keeping) |
 | `controls.post_actuators` | controlsd.py | Post-process actuators (e.g. vTarget override) |
 | `planner.subscriptions` | plannerd.py | Add cereal services to planner |
 | `planner.v_cruise` | longitudinal_planner.py | Modify target cruise speed |
@@ -56,8 +57,6 @@ Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpi
 #### Lane Change
 | Hook | Location | Description |
 |------|----------|-------------|
-| `desire.pre_lane_change` | desire_helper.py | Pre-state-machine hook |
-| `desire.post_lane_change` | desire_helper.py | Post-state-machine trigger detection |
 | `desire.post_update` | desire_helper.py | Modify lane change desire signals |
 
 #### Car & Device
@@ -65,8 +64,7 @@ Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpi
 |------|----------|-------------|
 | `car.cruise_initialized` | card.py | Called when cruise control engages |
 | `torqued.allowed_cars` | torqued.py | Extend cars allowed for steering learning |
-| `device.health_check` | plugin-defined | Device health monitoring |
-| `manager.startup` | plugin-defined | Manager initialization |
+| `device.health_check` | plugind.py | Plugin health aggregation |
 
 #### UI
 | Hook | Location | Description |
@@ -83,7 +81,8 @@ Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpi
 | `ui.hud_speed_color` | hud_renderer.py | Customize speed indicator color |
 | `ui.render_overlay` | augmented_road_view.py | Draw on onroad view |
 | `ui.pre_end_drawing` | application.py | Draw before frame ends (screen capture) |
-| `ui.vehicle_settings` | plugin-defined | Populate vehicle settings |
+| `ui.post_end_drawing` | application.py | After frame ends (screen capture, UI recording) |
+| `ui.vehicle_settings` | plugin-dispatched (ui_mod) | Car plugins populate the Vehicle panel |
 | `ui.connectivity_check` | sidebar.py | Report connectivity to sidebar |
 
 ## Supported Devices
