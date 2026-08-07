@@ -18,7 +18,7 @@ Install: `installer.comma.ai/catpilot-dev/catpilot`
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-<img src="docs/assets/catpilot_offroad.png" width="49%" alt="catpilot home screen" /> <img src="docs/assets/catpilot_onroad.jpg" width="49%" alt="catpilot onroad view" />
+<img src="docs/assets/catpilot_onroad.jpg" width="49%" alt="catpilot onroad view" /> <img src="docs/assets/catpilot_offroad.png" width="49%" alt="catpilot home screen" />
 
 </div>
 
