@@ -18,12 +18,18 @@ function agnos_init {
 
   # Check if AGNOS update is required
   if [ $(< /VERSION) != "$AGNOS_VERSION" ]; then
-    AGNOS_PY="$DIR/system/hardware/tici/agnos.py"
-    MANIFEST="$DIR/system/hardware/tici/agnos.json"
-    if $AGNOS_PY --verify $MANIFEST; then
-      sudo reboot
+    if grep -q "comma tici" /sys/firmware/devicetree/base/model 2>/dev/null; then
+      # comma three is restricted to AGNOS 12.8 and this repo carries no
+      # 12.8 images — never flash the manifest's AGNOS onto it.
+      echo "comma three requires AGNOS $AGNOS_VERSION, found $(< /VERSION); not flashing"
+    else
+      AGNOS_PY="$DIR/system/hardware/tici/agnos.py"
+      MANIFEST="$DIR/system/hardware/tici/agnos.json"
+      if $AGNOS_PY --verify $MANIFEST; then
+        sudo reboot
+      fi
+      $DIR/system/hardware/tici/updater $AGNOS_PY $MANIFEST
     fi
-    $DIR/system/hardware/tici/updater $AGNOS_PY $MANIFEST
   fi
 }
 

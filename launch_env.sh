@@ -16,8 +16,11 @@ export VECLIB_MAXIMUM_THREADS=1
 export QCOM_PRIORITY=12
 
 if [ -z "$AGNOS_VERSION" ]; then
-  if [ -f /VERSION ]; then
-    export AGNOS_VERSION="$(cat /VERSION)"
+  # comma three is restricted to AGNOS 12.8 — c3_compat bridges newer
+  # openpilot releases onto it; the OS never moves. Other devices track
+  # the AGNOS this release declares, like stock openpilot.
+  if grep -q "comma tici" /sys/firmware/devicetree/base/model 2>/dev/null; then
+    export AGNOS_VERSION="12.8"
   else
     export AGNOS_VERSION="17.2"
   fi
