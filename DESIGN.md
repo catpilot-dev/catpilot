@@ -151,7 +151,7 @@ signatures and current consumers are in the plugins repo's
 | `ui.hud_set_speed_override` | `ui/onroad/hud_renderer.py` | Override the displayed set speed |
 | `ui.hud_speed_color` | `ui/onroad/hud_renderer.py` | Colour the speed readout |
 | `ui.pre_end_drawing` | `system/ui/lib/application.py` | Before the frame ends — screen capture |
-| `ui.post_end_drawing` | `system/ui/lib/application.py` | After the frame ends — recording |
+| `ui.post_end_drawing` | `system/ui/lib/application.py` | After the frame ends — screen capture |
 
 `ui.vehicle_settings` is **not** a catpilot call site. It is dispatched by the
 `ui_mod` plugin so car plugins can populate the Vehicle panel; it lives entirely in

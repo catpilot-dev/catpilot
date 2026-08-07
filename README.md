@@ -56,7 +56,6 @@ Everything below comes pre-installed. Flash catpilot and it is already on the de
 | **Your car on the driving screen** | Your car's emblem, plus extra settings panels (Driving, Vehicle, Plugins) |
 | **Model selector** | Download and switch between driving models from the Software panel |
 | **Screenshots** | Tap the camera icon to save a picture of the driving screen |
-| **Drive replay video** | Renders your drives to video with the HUD drawn on top, for review in Connect on Device |
 
 ### Under the hood
 

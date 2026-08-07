@@ -1,3 +1,18 @@
+catpilot 0.11.1 (2026-08-07)
+========================
+* All plugins now versioned with the release (plugins 0.11.1)
+* Speed limit assist (speedlimitd)
+  * Offline OpenStreetMap data integration, behind an opt-in toggle
+  * Driver-intent enforcement: gas pedal pauses the limit, resumes on release
+  * Curve and highway-ramp speed handling refinements
+* Steadier lane centering (lane_keeping): in-lane wander damper
+* BMW E9x/E8x
+  * Steering stability: stiction handling and curvature-hold baseline
+  * Cruise stalk counter-collision fix
+  * DCC hold-threshold tuning
+* User-facing README; technical details split into DESIGN.md
+* ui_recorder plugin removed (drive video capture now owned by Connect on Device)
+
 catpilot 0.11.0 (2026-03-24)
 ========================
 * Rebased on openpilot 0.11.0
