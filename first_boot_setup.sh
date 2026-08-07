@@ -14,20 +14,36 @@ OPENPILOT_DIR="/data/openpilot"
 
 log() { echo "[catpilot-setup] $*"; }
 
-# 1. Clone and install plugins (git-based)
+# Which catpilot channel is installed? (dev, main, or a vX.Y.Z release branch)
+OP_BRANCH=$(git -C "$OPENPILOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+# 1. Clone and install plugins (git-based), version-matched to the catpilot branch
 if [ ! -d "$PLUGINS_DIR/.git" ]; then
-  log "Cloning plugins..."
-  git clone --depth 1 "$PLUGINS_REPO" "$PLUGINS_DIR" || true
+  if [ -n "$OP_BRANCH" ] && git ls-remote --exit-code --heads "$PLUGINS_REPO" "$OP_BRANCH" >/dev/null 2>&1; then
+    log "Cloning plugins ($OP_BRANCH)..."
+    git clone --depth 1 -b "$OP_BRANCH" "$PLUGINS_REPO" "$PLUGINS_DIR" || true
+  else
+    log "Cloning plugins (default branch)..."
+    git clone --depth 1 "$PLUGINS_REPO" "$PLUGINS_DIR" || true
+  fi
 fi
 if [ -f "$PLUGINS_DIR/install.sh" ]; then
   log "Installing plugins..."
   bash "$PLUGINS_DIR/install.sh" --target "$OPENPILOT_DIR" || true
 fi
 
-# 2. Download COD latest release (tarball-based, no git)
+# 2. Download COD release (tarball-based, no git) — version-matched when on a
+# vX.Y.Z release branch and that COD release exists, otherwise latest
 if [ ! -f "$CONNECT_DIR/VERSION" ]; then
   log "Downloading connect on device..."
-  TARBALL_URL=$(curl -sf "$CONNECT_RELEASE_API" | python3 -c "
+  RELEASE_JSON=""
+  case "$OP_BRANCH" in
+    v[0-9]*)
+      RELEASE_JSON=$(curl -sf "https://api.github.com/repos/catpilot-dev/connect-on-device/releases/tags/$OP_BRANCH")
+      ;;
+  esac
+  [ -z "$RELEASE_JSON" ] && RELEASE_JSON=$(curl -sf "$CONNECT_RELEASE_API")
+  TARBALL_URL=$(printf '%s' "$RELEASE_JSON" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 # Prefer cod-*.tar.gz asset, fall back to source tarball
