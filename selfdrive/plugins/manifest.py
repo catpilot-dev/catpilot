@@ -20,7 +20,7 @@ REQUIRED_FIELDS = ('id', 'name', 'version', 'type')
 VALID_TYPES = ('hook', 'process', 'hybrid', 'car', 'firmware')
 
 # Current openpilot version for compatibility checking
-OPENPILOT_VERSION = '0.10.3'
+OPENPILOT_VERSION = '0.11.1'
 
 
 def parse_version(v: str) -> tuple[int, ...]:
