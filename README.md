@@ -3,15 +3,17 @@
 <h1>catpilot</h1>
 
 <p>
-  <b>A plugin framework for <a href="https://github.com/commaai/openpilot">openpilot</a>.</b>
+  <b>openpilot, with the extras you actually want.</b>
   <br>
-  Extend your comma device with plugins — no fork maintenance required.
+  Everything openpilot does — plus features you can switch on and off one by one.
 </p>
 
 <h3>
   <a href="https://github.com/catpilot-dev/plugins">Plugins</a>
   <span> · </span>
-  <a href="https://github.com/catpilot-dev/connect">Connect on Device</a>
+  <a href="https://github.com/catpilot-dev/connect-on-device">Connect on Device</a>
+  <span> · </span>
+  <a href="DESIGN.md">How it works</a>
 </h3>
 
 Install: `installer.comma.ai/catpilot-dev/catpilot`
@@ -24,92 +26,125 @@ Install: `installer.comma.ai/catpilot-dev/catpilot`
 
 ## What is catpilot?
 
-catpilot is stock openpilot with a thin plugin layer on top. The openpilot code is untouched — catpilot only adds hook call sites that let plugins extend behavior at runtime. Upgrading to a new openpilot release means rebasing 5 commits.
+catpilot is [openpilot](https://github.com/commaai/openpilot) with a plugin layer on top.
 
-**What catpilot adds to stock openpilot:**
+Everything stock openpilot does, catpilot does — same driving models, same safety
+model, same supported cars. On top of that it ships a set of features as *plugins*:
+self-contained add-ons you can turn on and off individually in Settings, without
+reflashing your device or picking a different fork.
 
-| Commit | What it adds |
-|--------|-------------|
-| Brand as catpilot | Welcome screen, device paths, repo references |
-| C3 hardware | AR0231 sensor driver, Venus firmware wait, LogReader recovery |
-| Plugin framework | `selfdrive/plugins/` — hook dispatch, registry, manifest loader, plugin bus |
-| UI layout | Settings sidebar reorder, home screen widget hooks |
-| Screen capture | Render texture on device, `ui.pre_end_drawing` hook |
+The openpilot code underneath is left untouched, so catpilot tracks upstream
+releases closely rather than drifting away from them.
 
-Everything else is upstream openpilot.
+## What you get on top of openpilot
 
-## Architecture
+Everything below comes pre-installed. Flash catpilot and it is already on the device.
 
-catpilot inserts lightweight hook call sites into openpilot's control loop, planner, UI, and manager. Each hook follows a fail-safe pattern: if a plugin callback raises an exception, the default value is returned and other plugins continue running.
+### On the road
 
-Plugins live in a separate repo ([catpilot-dev/plugins](https://github.com/catpilot-dev/plugins)) and are installed to `/data/plugins-runtime/` on the device. Zero file overlays — all customization happens through hooks.
+| Feature | What it does for you |
+|---------|----------------------|
+| **Speed limit assist** | Watches the speed limit for you — from offline map data and from what the camera sees (lane count, road type) — and eases the car down for sharp curves and highway ramps |
+| **Steadier lane centering** | Damps the slow left-right sway ("ping-pong") inside the lane, so the car holds its line more calmly |
+| **BMW E8x / E9x support** | Adds a car openpilot doesn't support out of the box — see [Supported cars](#supported-cars) for the hardware this needs |
 
-### Hook Call Sites
+### On the screen
 
-#### Controls & Planning
-| Hook | Location | Description |
-|------|----------|-------------|
-| `controls.lat_controller_init` | controlsd.py | Replace/configure the lateral controller at init |
-| `controls.curvature_correction` | controlsd.py | Adjust steering curvature (lane keeping) |
-| `controls.post_actuators` | controlsd.py | Post-process actuators (e.g. vTarget override) |
-| `planner.subscriptions` | plannerd.py | Add cereal services to planner |
-| `planner.v_cruise` | longitudinal_planner.py | Modify target cruise speed |
-| `planner.accel_limits` | longitudinal_planner.py | Adjust acceleration limits |
+| Feature | What it does for you |
+|---------|----------------------|
+| **catpilot home screen** | Drive statistics and a map of your route on the offroad screen |
+| **Your car on the driving screen** | Your car's emblem, plus extra settings panels (Driving, Vehicle, Plugins) |
+| **Model selector** | Download and switch between driving models from the Software panel |
+| **Screenshots** | Tap the camera icon to save a picture of the driving screen |
+| **Drive replay video** | Renders your drives to video with the HUD drawn on top, for review in Connect on Device |
 
-#### Lane Change
-| Hook | Location | Description |
-|------|----------|-------------|
-| `desire.post_update` | desire_helper.py | Modify lane change desire signals |
+### Under the hood
 
-#### Car & Device
-| Hook | Location | Description |
-|------|----------|-------------|
-| `car.cruise_initialized` | card.py | Called when cruise control engages |
-| `torqued.allowed_cars` | torqued.py | Extend cars allowed for steering learning |
-| `device.health_check` | plugind.py | Plugin health aggregation |
+| Feature | What it does for you |
+|---------|----------------------|
+| **comma three support** | Keeps the original comma three working on current catpilot (display, panda, OS) |
+| **Connect on Device** | An on-device web app for browsing your routes and managing plugins from a phone or laptop |
+| **Diagnostics** | Plugin status is written into the drive logs, so problems can be worked out after a drive |
 
-#### UI
-| Hook | Location | Description |
-|------|----------|-------------|
-| `ui.settings_extend` | settings.py | Add custom settings panels |
-| `ui.home_extend` | home.py | Add home screen widgets |
-| `ui.main_extend` | main.py | Customize main layout |
-| `ui.state_tick` | ui_state.py | Called every UI state update |
-| `ui.state_subscriptions` | ui_state.py | Add cereal subscriptions to UI |
-| `ui.software_settings_extend` | software.py | Add items to software panel |
-| `ui.network_settings_extend` | settings.py | Customize network settings |
-| `ui.onroad_exp_button` | hud_renderer.py | Customize experimental mode button |
-| `ui.hud_set_speed_override` | hud_renderer.py | Override HUD speed display |
-| `ui.hud_speed_color` | hud_renderer.py | Customize speed indicator color |
-| `ui.render_overlay` | augmented_road_view.py | Draw on onroad view |
-| `ui.pre_end_drawing` | application.py | Draw before frame ends (screen capture) |
-| `ui.post_end_drawing` | application.py | After frame ends (screen capture, UI recording) |
-| `ui.vehicle_settings` | plugin-dispatched (ui_mod) | Car plugins populate the Vehicle panel |
-| `ui.connectivity_check` | sidebar.py | Report connectivity to sidebar |
+The full list, with a page per plugin, lives in the
+[plugins repo](https://github.com/catpilot-dev/plugins).
 
-## Supported Devices
+## Supported cars
 
-| Device | Panda | Status |
-|--------|-------|--------|
-| **comma three** (2021) | STM32F4 | Community supported* |
-| [comma 3X](https://github.com/commaai/hardware/tree/master/comma_3X) (2023) | STM32H7 | Supported |
-| [comma four](https://github.com/commaai/hardware/tree/master/comma_four) (2025) | STM32H7 | Supported |
+All [cars openpilot supports](docs/CARS.md), unchanged.
 
-*\* comma three support enabled by [c3_compat](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) plugin.*
+catpilot additionally supports the **BMW E8x / E9x** family — 1-Series coupe and
+convertible (E82 / E88, 2004–13) and 3-Series sedan, wagon, coupe and convertible
+(E90 / E91 / E92 / E93, 2005–11). Be aware this is not a plug-in-and-drive setup:
+these cars have no factory driver assistance to build on, so they need DIY cruise
+control wiring and an aftermarket Ocelot stepper servo on the steering rack. See the
+[BMW plugin page](https://github.com/catpilot-dev/plugins/tree/main/plugins/bmw_e9x_e8x)
+before buying anything.
 
-## Installation
+## Supported devices
+
+| Device | Status |
+|--------|--------|
+| **comma three** (2021) | Community supported* |
+| [comma 3X](https://github.com/commaai/hardware/tree/master/comma_3X) (2023) | Supported |
+| [comma four](https://github.com/commaai/hardware/tree/master/comma_four) (2025) | Supported |
+
+*\* comma three support comes from the [c3_compat](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) plugin, which is enabled automatically on that hardware.*
+
+## Installing
+
+On your comma device, choose **Custom Software** during setup and enter:
 
 ```
 installer.comma.ai/catpilot-dev/catpilot
 ```
 
-On first boot, catpilot automatically sets up plugins and connect on device.
+On first boot catpilot sets up the plugins and Connect on Device for you. There is
+nothing else to install.
 
-## Companion Projects
+## Turning features on and off
 
-- [catpilot-dev/plugins](https://github.com/catpilot-dev/plugins) — plugin packages and installer
-- [catpilot-dev/connect](https://github.com/catpilot-dev/connect) — on-device web UI for route browsing and plugin management
+- **Settings → Plugins** — one switch per plugin.
+- Individual features have their own switches in the panel they belong to. Lane
+  keeping lives in **Driving**, the model selector in **Software**, and your car's
+  options in **Vehicle**.
+- A few plugins are required by the car itself and can't be switched off wholesale.
+  Use their feature switch instead.
+
+## Updating
+
+catpilot updates the way openpilot does, and brings the matching plugins with it.
+Nothing to do by hand.
+
+## Safety
+
+catpilot keeps openpilot's safety model as-is: the limits that matter are enforced
+in compiled C on the panda, below anything a plugin can touch, and the driver
+monitoring is unchanged. Plugins cannot loosen those limits.
+
+That does not make the car self-driving. openpilot is
+[Level 2 driver assistance](https://en.wikipedia.org/wiki/Self-driving_car#Levels_of_driving_automation)
+— you are driving, you are responsible, and you must be paying attention at all
+times. Read [SAFETY.md](docs/SAFETY.md) and [LIMITATIONS.md](docs/LIMITATIONS.md)
+before your first drive.
+
+The BMW support in particular is a community effort on cars with no factory driver
+assistance, using aftermarket steering hardware. Treat it accordingly.
+
+## Companion projects
+
+- [catpilot-dev/plugins](https://github.com/catpilot-dev/plugins) — the features described above, one directory each
+- [catpilot-dev/connect-on-device](https://github.com/catpilot-dev/connect-on-device) — on-device web app for routes and plugin management
+
+## How it works
+
+If you want to know what catpilot changes in openpilot and how plugins attach to it,
+that's in [DESIGN.md](DESIGN.md). If you want to write a plugin, start with the
+[plugin development guide](https://github.com/catpilot-dev/plugins/blob/main/docs/DEVELOPMENT.md).
 
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
+catpilot is a community project. It is not affiliated with or endorsed by comma.ai
+or BMW.
