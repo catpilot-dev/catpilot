@@ -18,13 +18,14 @@ log() { echo "[catpilot-setup] $*"; }
 OP_BRANCH=$(git -C "$OPENPILOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 # 1. Clone and install plugins (git-based), version-matched to the catpilot branch
+FRESH_CLONE=0
 if [ ! -d "$PLUGINS_DIR/.git" ]; then
   if [ -n "$OP_BRANCH" ] && git ls-remote --exit-code --heads "$PLUGINS_REPO" "$OP_BRANCH" >/dev/null 2>&1; then
     log "Cloning plugins ($OP_BRANCH)..."
-    git clone --depth 1 -b "$OP_BRANCH" "$PLUGINS_REPO" "$PLUGINS_DIR" || true
+    git clone --depth 1 -b "$OP_BRANCH" "$PLUGINS_REPO" "$PLUGINS_DIR" && FRESH_CLONE=1
   else
     log "Cloning plugins (default branch)..."
-    git clone --depth 1 "$PLUGINS_REPO" "$PLUGINS_DIR" || true
+    git clone --depth 1 "$PLUGINS_REPO" "$PLUGINS_DIR" && FRESH_CLONE=1
   fi
 fi
 if [ -f "$PLUGINS_DIR/install.sh" ]; then
@@ -73,3 +74,12 @@ fi
 # 3. Mark complete
 touch "$MARKER"
 log "First-boot setup complete."
+
+# 4. If this fresh install brought boot patches (c3_compat on the comma three),
+# they were not active for the current launch — the launch script's boot_patch
+# check ran before this script cloned the plugins. Reboot once so they apply.
+# The marker above makes this a one-shot: this script never runs again.
+if [ "$FRESH_CLONE" = "1" ] && [ -f /data/plugins-runtime/c3_compat/boot_patch.sh ] && [ ! -f /data/plugins-runtime/c3_compat/.disabled ]; then
+  log "Boot patches installed on first boot — rebooting once to apply."
+  sudo reboot
+fi
