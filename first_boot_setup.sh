@@ -33,14 +33,27 @@ if [ -f "$PLUGINS_DIR/install.sh" ]; then
   bash "$PLUGINS_DIR/install.sh" --target "$OPENPILOT_DIR" || true
 fi
 
-# 2. Download COD release (tarball-based, no git) — version-matched when on a
-# vX.Y.Z release branch and that COD release exists, otherwise latest
+# 2. Download COD release (always a pre-built tarball; COD is never cloned).
+# Channel-scoped tags: rolling "vX.Y.Z-YYYY.MM.DD" preferred over the
+# bootstrap "vX.Y.Z", falling back to the latest release.
 if [ ! -f "$CONNECT_DIR/VERSION" ]; then
   log "Downloading connect on device..."
   RELEASE_JSON=""
   case "$OP_BRANCH" in
     v[0-9]*)
-      RELEASE_JSON=$(curl -sf "https://api.github.com/repos/catpilot-dev/connect-on-device/releases/tags/$OP_BRANCH")
+      # newest rolling release for this channel (list is newest-first)
+      ROLLING_TAG=$(curl -sf "https://api.github.com/repos/catpilot-dev/connect-on-device/releases?per_page=100" | python3 -c "
+import sys, json
+chan = '$OP_BRANCH'
+for r in json.load(sys.stdin):
+    t = r.get('tag_name', '')
+    if not r.get('draft') and not r.get('prerelease') and (t == chan or t.startswith(chan + '-')):
+        print(t); break
+" 2>/dev/null)
+      if [ -n "$ROLLING_TAG" ]; then
+        log "COD channel release: $ROLLING_TAG"
+        RELEASE_JSON=$(curl -sf "https://api.github.com/repos/catpilot-dev/connect-on-device/releases/tags/$ROLLING_TAG")
+      fi
       ;;
   esac
   [ -z "$RELEASE_JSON" ] && RELEASE_JSON=$(curl -sf "$CONNECT_RELEASE_API")
