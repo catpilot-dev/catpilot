@@ -14,7 +14,7 @@
   <a href="DESIGN.md">How it works</a>
 </h3>
 
-Install: `installer.catpilot.dev`
+Install: `install.catpilot.dev`
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
