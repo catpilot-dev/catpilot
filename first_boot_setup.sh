@@ -14,8 +14,11 @@ OPENPILOT_DIR="/data/openpilot"
 
 log() { echo "[catpilot-setup] $*"; }
 
-# Which catpilot channel is installed? (dev, main, or a vX.Y.Z release branch)
+# Which catpilot channel is installed? Release branches are named
+# "release-vX.Y.Z" (the bare vX.Y.Z name belongs to the tag); CHANNEL is the
+# version part, which is what COD's release tags are keyed on.
 OP_BRANCH=$(git -C "$OPENPILOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)
+CHANNEL="${OP_BRANCH#release-}"
 
 # 1. Clone and install plugins (git-based), version-matched to the catpilot branch
 FRESH_CLONE=0
@@ -39,12 +42,12 @@ fi
 if [ ! -f "$CONNECT_DIR/VERSION" ]; then
   log "Downloading connect on device..."
   RELEASE_JSON=""
-  case "$OP_BRANCH" in
+  case "$CHANNEL" in
     v[0-9]*)
       # newest rolling release for this channel (list is newest-first)
       ROLLING_TAG=$(curl -sf "https://api.github.com/repos/catpilot-dev/connect-on-device/releases?per_page=100" | python3 -c "
 import sys, json
-chan = '$OP_BRANCH'
+chan = '$CHANNEL'
 for r in json.load(sys.stdin):
     t = r.get('tag_name', '')
     if not r.get('draft') and not r.get('prerelease') and (t == chan or t.startswith(chan + '-')):
