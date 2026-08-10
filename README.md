@@ -46,6 +46,28 @@ catpilot is [openpilot](https://github.com/commaai/openpilot) with a lightweight
 
 *comma three support comes from the [c3_compat](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) plugin, which is enabled automatically on that hardware.*
 
+## Installing
+
+**Back up first — installing erases the device.** Reaching the Custom Software
+screen means a factory reset, which reformats `/data`: every recorded drive,
+your calibration and all settings are gone. Copy anything you want to keep off
+the device before you start.
+
+1. **comma three only:** the device must already be on **AGNOS 12.8**. Install
+   the last stock openpilot that supports it
+   (`openpilot.comma.ai`), or flash AGNOS 12.8 via
+   [flash.comma.ai](https://flash.comma.ai/). The installer checks this and
+   tells you if you're on the wrong version. (comma 3X and four: nothing to do.)
+2. **Settings → Device → Factory Reset**, and let the device reboot into setup.
+3. At **Custom Software**, enter `install.catpilot.dev`.
+4. First boot fetches the plugins and Connect on Device, then reboots once on
+   its own. That reboot is expected — let it finish.
+5. Drive to recalibrate before judging how it steers; the reset wiped the
+   learned calibration.
+
+Something went wrong? [Open an issue](https://github.com/catpilot-dev/catpilot/issues).
+To go back, install stock openpilot the same way.
+
 ## Safety
 
 catpilot keeps openpilot's safety model as-is: [SAFETY.md](docs/SAFETY.md) and [LIMITATIONS.md](docs/LIMITATIONS.md).
