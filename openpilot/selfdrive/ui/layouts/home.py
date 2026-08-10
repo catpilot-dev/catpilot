@@ -295,4 +295,12 @@ class HomeLayout(Widget):
   def _get_version_text(self) -> str:
     brand = "catpilot"
     description = self.params.get("UpdaterCurrentDescription")
-    return f"{brand} {description}" if description else brand
+    if not description:
+      return brand
+    # "<version> / <branch> / <commit> / <date>". Release branches are named
+    # release-vX.Y.Z, so the leading version just repeats the branch — drop it
+    # there and keep it on dev, where the branch says nothing about version.
+    parts = description.split(" / ")
+    if len(parts) > 1 and parts[0] and parts[0] in parts[1]:
+      description = " / ".join(parts[1:])
+    return f"{brand} {description}"
