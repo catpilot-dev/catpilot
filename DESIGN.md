@@ -154,7 +154,7 @@ signatures and current consumers are in the plugins repo's
 | `ui.post_end_drawing` | `system/ui/lib/application.py` | After the frame ends — screen capture |
 
 `ui.vehicle_settings` is **not** a catpilot call site. It is dispatched by the
-`ui_mod` plugin so car plugins can populate the Vehicle panel; it lives entirely in
+`ui_mod` plugin so car plugins can populate the Driving panel; it lives entirely in
 the plugins repo.
 
 ## Keeping cereal clean: build-time schema injection
