@@ -22,6 +22,7 @@ from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
+from openpilot.selfdrive.plugins.hooks import hooks
 
 from openpilot.common.version import get_build_metadata
 from openpilot.common.hardware import HARDWARE
@@ -463,6 +464,9 @@ class SelfdriveD:
         self.personality = (self.personality - 1) % 3
         self.params.put('LongitudinalPersonality', self.personality)
         self.events.add(EventName.personalityChanged)
+
+    # Plugin hook: let car plugins filter the final event set (e.g. engagement policies)
+    hooks.run('selfdrived.events_filter', None, self.events, CS, self.CS_prev, self.enabled)
 
   def data_sample(self):
     _car_state = messaging.recv_one(self.car_state_sock)
