@@ -29,7 +29,7 @@ catpilot is [openpilot](https://github.com/commaai/openpilot) with a lightweight
 | Feature | What it does for you |
 |---------|----------------------|
 | [**Speed limit assist**](https://github.com/catpilot-dev/plugins/tree/main/plugins/speedlimitd) | Watches the speed limit for you — from offline map data and from what the camera sees (lane count, road type) — and eases the car down for sharp curves and highway ramps |
-| [**Lane keeping**](https://github.com/catpilot-dev/plugins/tree/main/plugins/lane_keeping) | Damps the slow left-right sway ("ping-pong") inside the lane |
+| [**Lane keeping**](https://github.com/catpilot-dev/plugins/tree/main/plugins/lane_keeping) | Smooths the model's curvature reference (an arc through its planned path ahead) for the vehicle's lateral controller |
 | [**Model selector**](https://github.com/catpilot-dev/plugins/tree/main/plugins/model_selector) | Download and switch between driving models from the Software panel |
 | [**comma three support**](https://github.com/catpilot-dev/plugins/tree/main/plugins/c3_compat) | Keeps the original comma three working on current catpilot (display, panda, OS) |
 
