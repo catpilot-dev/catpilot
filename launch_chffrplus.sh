@@ -19,14 +19,20 @@ function agnos_init {
 
   # Check if AGNOS update is required
   if [ "$(< /VERSION)" != "$AGNOS_VERSION" ]; then
-    AGNOS_PY="$DIR/openpilot/common/hardware/comma/agnos.py"
-    MANIFEST="$DIR/openpilot/system/hardware/comma/agnos.json"
-    if "$AGNOS_PY" --verify "$MANIFEST"; then
-      sudo reboot
+    if grep -q "comma tici" /sys/firmware/devicetree/base/model 2>/dev/null; then
+      # comma three is restricted to AGNOS 12.8 and this repo carries no
+      # 12.8 images — never flash the manifest's AGNOS onto it.
+      echo "comma three requires AGNOS $AGNOS_VERSION, found $(< /VERSION); not flashing"
+    else
+      AGNOS_PY="$DIR/openpilot/common/hardware/comma/agnos.py"
+      MANIFEST="$DIR/openpilot/system/hardware/comma/agnos.json"
+      if "$AGNOS_PY" --verify "$MANIFEST"; then
+        sudo reboot
+      fi
+      while true; do
+        "$DIR/openpilot/common/hardware/comma/updater" "$AGNOS_PY" "$MANIFEST"
+      done
     fi
-    while true; do
-      "$DIR/openpilot/common/hardware/comma/updater" "$AGNOS_PY" "$MANIFEST"
-    done
   fi
 }
 
@@ -70,6 +76,30 @@ function launch {
     fi
   fi
 
+  # Apply c3_compat boot patches (after overlay swap so new code gets patched)
+  BOOT_PATCH=/data/plugins-runtime/c3_compat/boot_patch.sh
+  if [ -f "$BOOT_PATCH" ] && [ ! -f /data/plugins-runtime/c3_compat/.disabled ]; then
+    source "$BOOT_PATCH" "$DIR"
+  fi
+
+  # Install plugins: copy overlays + plugins from repo to runtime locations
+  # Runs after c3_compat (needs boot patches) and before builder.py (needs /data/plugins-runtime/ populated)
+  PLUGIN_INSTALL=/data/plugins/install.sh
+  if [ -f "$PLUGIN_INSTALL" ]; then
+    bash "$PLUGIN_INSTALL" --target "$DIR" >> /tmp/plugin_install.log 2>&1 || true
+  fi
+
+  # First-boot auto-setup: clone plugins + connect on device
+  if [ ! -f /data/.catpilot_setup_complete ]; then
+    bash "$DIR/first_boot_setup.sh" >> /tmp/catpilot_first_boot.log 2>&1 || true
+  fi
+
+  # Start COD server if installed
+  if [ -f /data/connect-on-device/setup_service.sh ]; then
+    bash /data/connect-on-device/setup_service.sh
+  fi
+
+
   # handle pythonpath
   ln -sfn "$(pwd)" /data/pythonpath
   export PYTHONPATH="$PWD"
@@ -81,6 +111,11 @@ function launch {
   ln -sfn rednose_repo/rednose rednose
   ln -sfn teleoprtc_repo/teleoprtc teleoprtc
   ln -sfn tinygrad_repo/tinygrad tinygrad
+
+  # AGNOS 12.8: extra packages in /data/pip_packages (read-only venv)
+  if [ -d "/data/pip_packages" ]; then
+    export PYTHONPATH="$PYTHONPATH:/data/pip_packages"
+  fi
 
   # hardware specific init
   if [ -f /AGNOS ]; then
