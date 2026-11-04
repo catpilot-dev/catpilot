@@ -37,6 +37,7 @@ class Controls:
     self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
     cloudlog.info("controlsd got CarParams")
 
+    hooks._ensure_loaded()  # car plugins register their interfaces at load time; load before the lookup
     self.CI = interfaces[self.CP.carFingerprint](self.CP)
 
     self.sm = messaging.SubMaster(['lateralDelay', 'vehicleParameters', 'lateralTorqueParameters', 'modelV2', 'selfdriveState',

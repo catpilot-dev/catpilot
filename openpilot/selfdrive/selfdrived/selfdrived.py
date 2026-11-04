@@ -61,6 +61,7 @@ class SelfdriveD:
     else:
       self.CP = CP
 
+    hooks._ensure_loaded()  # car plugins register their interfaces at load time; CarEvents looks them up
     self.car_events = CarEvents(self.CP)
 
     self.pose_calibrator = PoseCalibrator()
