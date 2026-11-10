@@ -60,8 +60,8 @@ the device before you start.
    tells you if you're on the wrong version. (comma 3X and four: nothing to do.)
 2. **Settings → Device → Factory Reset**, and let the device reboot into setup.
 3. At **Custom Software**, enter `install.catpilot.dev`.
-4. First boot fetches the plugins and Connect on Device, then reboots once on
-   its own. That reboot is expected — let it finish.
+4. First boot fetches the plugins and Connect on Device, so it needs network.
+   If the download fails it is retried on every boot until it succeeds.
 5. Drive to recalibrate before judging how it steers; the reset wiped the
    learned calibration.
 
