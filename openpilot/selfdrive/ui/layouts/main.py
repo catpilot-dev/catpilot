@@ -40,6 +40,9 @@ class MainLayout(Widget):
     self._sidebar_rect = rl.Rectangle(0, 0, 0, 0)
     self._content_rect = rl.Rectangle(0, 0, 0, 0)
 
+    # Before _setup_callbacks(): the ui.main_extend hook may override it
+    self._default_settings_panel = PanelType.DEVICE
+
     # Set callbacks
     self._setup_callbacks()
 
@@ -49,8 +52,6 @@ class MainLayout(Widget):
     self._onboarding_window = OnboardingWindow()
     if not self._onboarding_window.completed:
       gui_app.push_widget(self._onboarding_window)
-
-    self._default_settings_panel = PanelType.DEVICE
 
   def set_default_settings_panel(self, key):
     self._default_settings_panel = key

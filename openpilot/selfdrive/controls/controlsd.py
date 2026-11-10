@@ -143,6 +143,10 @@ class Controls:
       actuators.curvature = float(lateral_output)
     else:
       actuators.steeringAngleDeg = float(lateral_output)
+
+    # Plugin hook: post-process actuators (e.g. BMW DCC vTarget override)
+    hooks.run('controls.post_actuators', None, actuators, CS, long_plan)
+
     # Ensure no NaNs/Infs
     for p in ACTUATOR_FIELDS:
       attr = getattr(actuators, p)
@@ -152,9 +156,6 @@ class Controls:
       if not math.isfinite(attr):
         cloudlog.error(f"actuators.{p} not finite {actuators.to_dict()}")
         setattr(actuators, p, 0.0)
-
-    # Plugin hook: post-process actuators (e.g. BMW DCC vTarget override)
-    hooks.run('controls.post_actuators', None, actuators, CS, long_plan)
 
     return CC, lac_log
 

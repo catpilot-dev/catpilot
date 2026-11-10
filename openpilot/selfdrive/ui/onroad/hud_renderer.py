@@ -192,16 +192,7 @@ class HudRenderer(Widget):
     speed_text = str(round(self.speed))
     speed_text_size = measure_text_cached(self._font_bold, speed_text, FONT_SIZES.current_speed)
     speed_pos = rl.Vector2(rect.x + rect.width / 2 - speed_text_size.x / 2, 180 - speed_text_size.y / 2)
-
-    # Plugin hook: override speed text color (e.g., yellow when curvature-limited)
-    speed_color = COLORS.WHITE
-    try:
-      from openpilot.selfdrive.plugins.hooks import hooks
-      speed_color = hooks.run('ui.hud_speed_color', speed_color)
-    except ImportError:
-      pass
-
-    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, speed_color)
+    rl.draw_text_ex(self._font_bold, speed_text, speed_pos, FONT_SIZES.current_speed, 0, COLORS.WHITE)
 
     unit_text = tr("km/h") if ui_state.is_metric else tr("mph")
     unit_text_size = measure_text_cached(self._font_medium, unit_text, FONT_SIZES.speed_unit)
