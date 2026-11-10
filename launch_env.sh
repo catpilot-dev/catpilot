@@ -30,17 +30,12 @@ fi
 # AGNOS 16+: system Python has everything
 export PATH="/usr/local/venv/bin:$PATH"
 
-# AGNOS 12.8: Raylib uses Wayland backend via Weston compositor
-# AGNOS 16+: uses DRM directly (no Weston needed)
+# AGNOS 12.8 (comma three): raylib draws on DRM directly and c3_compat stops
+# Weston. There is no DRM fd broker ("magic", AGNOS 19), so the raylib comma
+# backend must open /dev/dri/card0 itself, which it does only when NO_MASTER is set.
 AGNOS_MAJOR=$(echo "$AGNOS_VERSION" | cut -d. -f1)
 if [ "$AGNOS_MAJOR" -lt 16 ] 2>/dev/null; then
-  # Ensure Weston compositor is running for Wayland backend
-  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/tmp/weston}"
-  export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-  # Fix socket permissions if needed
-  if [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
-    sudo chmod a+rw "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" 2>/dev/null || true
-  fi
+  export NO_MASTER=1
 fi
 
 export STAGING_ROOT="/data/safe_staging"

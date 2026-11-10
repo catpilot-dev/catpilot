@@ -76,22 +76,32 @@ function launch {
     fi
   fi
 
-  # Apply c3_compat boot patches (after overlay swap so new code gets patched)
-  BOOT_PATCH=/data/plugins-runtime/c3_compat/boot_patch.sh
-  if [ -f "$BOOT_PATCH" ] && [ ! -f /data/plugins-runtime/c3_compat/.disabled ]; then
-    source "$BOOT_PATCH" "$DIR"
-  fi
-
-  # Install plugins: copy overlays + plugins from repo to runtime locations
-  # Runs after c3_compat (needs boot patches) and before builder.py (needs /data/plugins-runtime/ populated)
+  # Install plugins: refresh /data/plugins-runtime/ (including c3_compat's boot
+  # patcher) from the /data/plugins checkout. Runs after the overlay swap and
+  # before the boot patches below, so they run from the version just installed.
   PLUGIN_INSTALL=/data/plugins/install.sh
   if [ -f "$PLUGIN_INSTALL" ]; then
     bash "$PLUGIN_INSTALL" --target "$DIR" >> /tmp/plugin_install.log 2>&1 || true
   fi
 
-  # First-boot auto-setup: clone plugins + connect on device
+  # First-boot auto-setup: clone plugins + connect on device (runs install.sh
+  # itself after a fresh clone). Retried on each boot until it completes.
   if [ ! -f /data/.catpilot_setup_complete ]; then
     bash "$DIR/first_boot_setup.sh" >> /tmp/catpilot_first_boot.log 2>&1 || true
+  fi
+
+  # install.sh (run above, and by first_boot_setup.sh) leaves .needs_restart for
+  # plugind, which then stops all plugin processes and kills the UI. That is
+  # meant for installs done while the system runs; at boot nothing is running
+  # yet and everything starts from the freshly installed files, so drop it.
+  rm -f /data/plugins-runtime/.needs_restart
+
+  # Apply c3_compat boot patches: after the overlay swap (so the code that runs is
+  # what gets patched), after the plugin install (so the patcher is current, also
+  # on the boot that first clones the plugins), and before build.py.
+  BOOT_PATCH=/data/plugins-runtime/c3_compat/boot_patch.sh
+  if [ -f "$BOOT_PATCH" ] && [ ! -f /data/plugins-runtime/c3_compat/.disabled ]; then
+    source "$BOOT_PATCH" "$DIR"
   fi
 
   # Start COD server if installed
@@ -104,6 +114,15 @@ function launch {
   ln -sfn "$(pwd)" /data/pythonpath
   export PYTHONPATH="$PWD"
 
+  # AGNOS 12.8 (comma three): cereal's SConscript runs a bare `capnpc`, which
+  # must be the comma-deps-capnproto wheel's so the generated headers match the
+  # libcapnp the build links. The system scons runs under /usr/bin/python3 and
+  # needs the venv's site-packages (and opendbc_repo) for the build's imports.
+  if [ "$AGNOS_MAJOR" -lt 16 ] 2>/dev/null; then
+    export PATH="/usr/local/venv/lib/python3.12/site-packages/capnproto/install/bin:/usr/local/venv/bin:$PATH"
+    export PYTHONPATH="$PYTHONPATH:$PWD/opendbc_repo:/usr/local/venv/lib/python3.12/site-packages"
+  fi
+
   # submodule package symlinks for PYTHONPATH imports on device.
   # on PC these come from editable installs via pyproject.toml / uv.
   ln -sfn msgq_repo/msgq msgq
@@ -111,11 +130,6 @@ function launch {
   ln -sfn rednose_repo/rednose rednose
   ln -sfn teleoprtc_repo/teleoprtc teleoprtc
   ln -sfn tinygrad_repo/tinygrad tinygrad
-
-  # AGNOS 12.8: extra packages in /data/pip_packages (read-only venv)
-  if [ -d "/data/pip_packages" ]; then
-    export PYTHONPATH="$PYTHONPATH:/data/pip_packages"
-  fi
 
   # hardware specific init
   if [ -f /AGNOS ]; then
