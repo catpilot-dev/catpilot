@@ -40,12 +40,12 @@ Nine commits sit on top of upstream (openpilot v0.11.2). This is the entire delt
 | `brand` | 6 files | Naming, README, release notes, this document, screenshots |
 | `feat: plugin framework` | 36 files | `openpilot/selfdrive/plugins/` (the framework itself, ~10 files + tests) plus the UI, onroad and manager hook call sites, and screen-capture/recording infrastructure |
 | `ui: Factory Reset` | 2 files | Moves Uninstall under Device as Factory Reset |
-| `controls: lateral hooks` | 2 files | Lateral hook call sites in `controlsd.py` and the `desire.post_update` hook in `desire_helper.py` |
+| `controls: lateral hooks` | 1 file | Lateral hook call sites in `controlsd.py` |
 | `feat(planner): vTarget` | 7 files | Publishes `vTarget`, the plan speed at the actuator delay: the MPC speed capped at the plugin-adjusted cruise speed and at the speed `aTarget`'s own slope reaches (0.11.2's MPC only follows leads, and cruise is a separate `aTarget` candidate). It never implies more acceleration than `aTarget`; a set speed below `vEgo` makes it a destination |
 | `selfdrived: events_filter` | 2 files | `selfdrived.events_filter` hook at the end of `update_events`, plus its test |
 | `ui: version text` | 1 file | Drops the redundant version from the home screen when the branch name carries it |
-| `launch` | 2 files | Boot chain in `launch_chffrplus.sh` (c3_compat patches, plugin install, first boot, COD) and the comma three AGNOS 12.8 policy in `launch_env.sh` |
-| `first boot` | 1 file | `first_boot_setup.sh`: clones the plugins branch and COD release matching the installed channel |
+| `launch` | 2 files | Boot chain in `launch_chffrplus.sh` (plugin install, first boot, then c3_compat patches from the just-installed plugins, COD) and the comma three AGNOS 12.8 policy in `launch_env.sh` |
+| `first boot` | 1 file | `first_boot_setup.sh`: clones the plugins branch and COD release matching the installed channel; retried on every boot until both are in place, no reboot |
 
 The framework, lateral-hooks and events_filter commits add hook call sites. The rest is
 branding, boot plumbing and one upstream backport. comma three hardware support lives in
@@ -111,9 +111,17 @@ that genuinely has to cross process boundaries goes over the plugin bus or cerea
 This is also why every UI import inside a plugin must be lazy — a module-level UI
 import would execute in controlsd too.
 
+### Plugin processes belong to plugind
+
+Processes declared in a plugin's `processes` list are not manager processes. plugind
+spawns them in their own process group (so they survive a plugind restart) and enforces
+each one's `condition`: `always_run`, `only_onroad` or `only_offroad`, from
+`deviceState.started`. Until plugind has received `deviceState`, conditional processes
+are left as they are. An onroad/offroad transition reaches them within about a second.
+
 ## Where the call sites are
 
-24 hooks. 23 are dispatched from 16 upstream files; `device.health_check` is dispatched
+19 hooks. 18 are dispatched from 12 upstream files; `device.health_check` is dispatched
 by plugind, catpilot's own daemon. Grouped by where they sit in openpilot's flow;
 signatures and current consumers are in the plugins repo's
 [`HOOK_INTEGRATION_POINTS.md`](https://github.com/catpilot-dev/plugins/blob/main/docs/HOOK_INTEGRATION_POINTS.md).
@@ -125,8 +133,6 @@ signatures and current consumers are in the plugins repo's
 | `controls.lat_controller_init` | `controlsd.py` | Once at init, after the lateral controller is constructed — lets a plugin configure or replace it |
 | `controls.curvature_correction` | `controlsd.py` | Every frame, on the model's curvature before it reaches the lateral controller |
 | `controls.post_actuators` | `controlsd.py` | Every frame, after actuators are computed — read-only observation point |
-| `desire.post_update` | `lib/desire_helper.py` | After the lane-change state machine updates, on the resulting desire |
-| `planner.subscriptions` | `plannerd.py` | Once at init, on the service list — lets a plugin add cereal subscriptions |
 | `planner.v_cruise` | `lib/longitudinal_planner.py` | Every planner cycle, on target cruise speed — runs before the force-decel override |
 
 ### Car and device
@@ -135,8 +141,7 @@ signatures and current consumers are in the plugins repo's
 |------|------|-------------------|
 | `car.cruise_initialized` | `openpilot/selfdrive/car/card.py` | When cruise control engages |
 | `selfdrived.events_filter` | `openpilot/selfdrive/selfdrived/selfdrived.py` | End of `update_events`, on the populated event set — lets car plugins filter events (engagement policies) |
-| `torqued.allowed_cars` | `openpilot/selfdrive/locationd/torqued.py` | **At module import**, on the allow-list for steering torque learning — not per-frame |
-| `device.health_check` | `openpilot/selfdrive/plugins/plugind.py` | Every plugind tick, accumulating a `{plugin: status}` dict |
+| `device.health_check` | `openpilot/selfdrive/plugins/plugind.py` | Every plugind full pass (5 s), accumulating a `{plugin: status}` dict |
 
 ### UI — `openpilot/selfdrive/`
 
@@ -149,11 +154,9 @@ signatures and current consumers are in the plugins repo's
 | `ui.main_extend` | `ui/layouts/main.py` | Customise the main layout |
 | `ui.state_tick` | `ui/ui_state.py` | Every UI state update |
 | `ui.state_subscriptions` | `ui/ui_state.py` | Add cereal subscriptions to the UI |
-| `ui.connectivity_check` | `ui/layouts/sidebar.py` | Report connectivity into the sidebar |
 | `ui.render_overlay` | `ui/onroad/augmented_road_view.py` | Draw over the onroad view |
 | `ui.onroad_exp_button` | `ui/onroad/hud_renderer.py` | Customise the experimental-mode button |
 | `ui.hud_set_speed_override` | `ui/onroad/hud_renderer.py` | Override the displayed set speed |
-| `ui.hud_speed_color` | `ui/onroad/hud_renderer.py` | Colour the speed readout |
 | `ui.pre_end_drawing` | `openpilot/system/ui/lib/application.py` | Before the frame ends — screen capture |
 | `ui.post_end_drawing` | `openpilot/system/ui/lib/application.py` | After the frame ends — screen capture |
 
@@ -182,8 +185,8 @@ enable state changes — cached in `/tmp/plugin_build_hash`, so it is recomputed
 boot. Deleting that file forces a rebuild.
 
 Two consequences for anyone working in this repo: a dirty `openpilot/cereal/` working tree after
-boot is expected, not a mistake; and `restore_stock()` in `builder.py` is the escape
-hatch that checks those files back out.
+boot is expected, not a mistake; and `git checkout -- openpilot/cereal/` is the escape
+hatch that restores those files.
 
 ## Rebasing onto a new openpilot release
 
