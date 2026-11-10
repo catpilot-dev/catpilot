@@ -5,7 +5,7 @@ loads enabled plugins, and manages their lifecycle.
 
 Supports plugin types: hook, process, hybrid, car, firmware
 Handles: dependency ordering, conflict detection, device filtering,
-         process replacement, and per-process lazy loading.
+         standalone process listing for plugind, and per-process lazy loading.
 """
 import importlib
 import importlib.util
@@ -104,8 +104,9 @@ class PluginRegistry:
         }
       }
 
-    Process plugins define processes:
-      "processes": [{"name": "ui", "module": "ui.ui", "condition": "always_run", "replace": true}]
+    Process/hybrid plugins also declare processes, which plugind spawns
+    (see get_standalone_processes()); loading does not start them:
+      "processes": [{"name": "speedlimitd", "module": "speedlimitd", "condition": "only_onroad"}]
     """
     info = self.plugins.get(plugin_id)
     if info is None:
@@ -209,7 +210,7 @@ class PluginRegistry:
     cloudlog.info(f"Unloaded plugin: {plugin_id}")
 
   def load_enabled(self):
-    """Load all plugins that are enabled via Params.
+    """Load all enabled plugins (no .disabled marker) and unload disabled ones.
 
     Uses dependency-aware ordering: plugins with no dependencies load first,
     then plugins whose dependencies are already loaded.
@@ -231,38 +232,15 @@ class PluginRegistry:
           # If failed due to dependency, retry next pass
           if info.error and 'Dependency' in info.error:
             pending = True
-            info.error = None  # Reset for retry
       if not pending:
         break
 
-  def get_process_overrides(self) -> dict[str, dict]:
-    """Return process replacement map from loaded process/hybrid plugins.
-
-    Returns:
-      {process_name: {"module": "plugin.module", "plugin_id": "...", "condition": "..."}}
-    """
-    overrides = {}
-    for plugin_id, info in self.plugins.items():
-      if not info.loaded:
-        continue
-      manifest = info.manifest
-      if manifest['type'] not in ('process', 'hybrid'):
-        continue
-      for proc_def in manifest.get('processes', []):
-        if proc_def.get('replace', False):
-          overrides[proc_def['name']] = {
-            'module': proc_def['module'],
-            'plugin_id': plugin_id,
-            'plugin_dir': info.plugin_dir,
-            'condition': proc_def.get('condition', 'always_run'),
-          }
-    return overrides
-
   def get_standalone_processes(self) -> list[dict]:
-    """Return standalone (non-replacement) processes from loaded plugins.
+    """Return every process declared by loaded process/hybrid plugins.
 
-    Returns list of process definitions for plugind to spawn directly:
-      [{"name": "github_pinger", "module": "github_pinger", "plugin_id": "...", "plugin_dir": "..."}]
+    plugind spawns and supervises these itself, honouring each one's condition:
+      [{"name": "mapd", "module": "mapd_runner", "plugin_id": "...", "plugin_dir": "...",
+        "condition": "always_run", "requires": [...]}]
     """
     processes = []
     for plugin_id, info in self.plugins.items():
@@ -272,15 +250,14 @@ class PluginRegistry:
       if manifest['type'] not in ('process', 'hybrid'):
         continue
       for proc_def in manifest.get('processes', []):
-        if not proc_def.get('replace', False):
-          processes.append({
-            'name': proc_def['name'],
-            'module': proc_def['module'],
-            'plugin_id': plugin_id,
-            'plugin_dir': info.plugin_dir,
-            'condition': proc_def.get('condition', 'always_run'),
-            'requires': proc_def.get('requires', []),
-          })
+        processes.append({
+          'name': proc_def['name'],
+          'module': proc_def['module'],
+          'plugin_id': plugin_id,
+          'plugin_dir': info.plugin_dir,
+          'condition': proc_def.get('condition', 'always_run'),
+          'requires': proc_def.get('requires', []),
+        })
     return processes
 
   def get_status(self) -> list[dict]:
@@ -302,67 +279,3 @@ class PluginRegistry:
       }
       for info in self.plugins.values()
     ]
-
-  def install_plugin(self, source_url: str, plugin_id: str | None = None) -> str | None:
-    """Install a plugin from a git URL or local path.
-
-    Returns plugin_id on success, None on failure.
-    """
-    import subprocess
-
-    if not os.path.isdir(self.plugins_dir):
-      os.makedirs(self.plugins_dir, exist_ok=True)
-
-    # Determine target directory
-    if source_url.startswith('/') or source_url.startswith('.'):
-      # Local path — copy
-      import shutil
-      if plugin_id is None:
-        plugin_id = os.path.basename(source_url.rstrip('/'))
-      target = os.path.join(self.plugins_dir, plugin_id)
-      if os.path.exists(target):
-        shutil.rmtree(target)
-      shutil.copytree(source_url, target)
-    else:
-      # Git URL — clone
-      if plugin_id is None:
-        plugin_id = source_url.rstrip('/').split('/')[-1].replace('.git', '')
-      target = os.path.join(self.plugins_dir, plugin_id)
-      if os.path.exists(target):
-        # Update existing
-        result = subprocess.run(['git', '-C', target, 'pull'], capture_output=True, text=True)
-      else:
-        result = subprocess.run(['git', 'clone', '--depth=1', source_url, target],
-                                capture_output=True, text=True)
-      if result.returncode != 0:
-        cloudlog.error(f"Git clone failed: {result.stderr}")
-        return None
-
-    # Validate manifest
-    manifest = load_manifest(target)
-    if manifest is None:
-      cloudlog.error("Installed plugin has invalid manifest")
-      return None
-
-    actual_id = manifest['id']
-    self.plugins[actual_id] = PluginInfo(manifest, target)
-    cloudlog.info(f"Installed plugin: {actual_id}")
-    return actual_id
-
-  def uninstall_plugin(self, plugin_id: str) -> bool:
-    """Remove a plugin from disk."""
-    import shutil
-
-    info = self.plugins.get(plugin_id)
-    if info is None:
-      return False
-
-    if info.loaded:
-      self.unload_plugin(plugin_id)
-
-    if os.path.exists(info.plugin_dir):
-      shutil.rmtree(info.plugin_dir)
-
-    del self.plugins[plugin_id]
-    cloudlog.info(f"Uninstalled plugin: {plugin_id}")
-    return True

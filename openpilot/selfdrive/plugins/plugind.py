@@ -5,9 +5,16 @@ Runs as an always_run process. Responsibilities:
   1. Scan /data/plugins-runtime/ for installed plugins
   2. Validate compatibility (min/max openpilot version)
   3. Load enabled plugins, register hooks + processes
-  4. Spawn and monitor standalone plugin processes
+  4. Spawn and monitor standalone plugin processes, honouring each one's
+     condition (always_run, only_onroad, only_offroad) against deviceState.started
   5. Serve REST API on localhost for COD
   6. Poll for enable/disable changes
+
+The main loop ticks at 1 Hz. Every POLL_INTERVAL seconds it does a full pass
+(reload enabled plugins, sync processes, health hooks, restart marker); on any
+other tick where the onroad state changed it only syncs processes, so onroad
+processes start within about a second of a drive starting. The update check
+runs on its own thread: its git fetch can block for tens of seconds.
 
 Plugin processes use subprocess.Popen with os.setpgrp (like DaemonProcess
 for athena) so they survive plugind restarts and are isolated from
@@ -17,6 +24,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import openpilot.cereal.messaging as messaging
@@ -28,10 +36,11 @@ from openpilot.selfdrive.plugins.registry import PluginRegistry
 from openpilot.selfdrive.plugins.api import set_registry, start_api_server
 from openpilot.selfdrive.plugins.update_checker import UpdateChecker
 
-POLL_INTERVAL = 5.0  # seconds between checking for config changes
+POLL_INTERVAL = 5.0  # seconds between full passes (config changes, process sync, health)
 PID_DIR = '/data/plugins-runtime/.pids'
 LOG_DIR = '/tmp/plugin_logs'
 RESTART_MARKER = '/data/plugins-runtime/.needs_restart'
+BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
 
 
 class PluginProcessManager:
@@ -46,6 +55,63 @@ class PluginProcessManager:
     self._pids: dict[str, int] = {}
     os.makedirs(PID_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
+    self._clear_stale_pid_files()
+
+  @staticmethod
+  def _clear_stale_pid_files():
+    """Drop PID files written during a previous boot.
+
+    PID_DIR is on persistent storage, so after a reboot its PIDs may belong to
+    unrelated processes. Same-boot files are kept: plugin processes survive a
+    plugind restart and are reconnected through them.
+    """
+    try:
+      with open(BOOT_ID_PATH) as f:
+        boot_id = f.read().strip()
+    except OSError:
+      return
+    if not boot_id:
+      return
+
+    boot_id_file = os.path.join(PID_DIR, '.boot_id')
+    other_boot = False
+    try:
+      with open(boot_id_file) as f:
+        if f.read().strip() == boot_id:
+          return
+      other_boot = True
+    except OSError:
+      pass
+
+    for f in os.listdir(PID_DIR):
+      if not f.endswith('.pid'):
+        continue
+      path = os.path.join(PID_DIR, f)
+      # No marker yet (first start of this code): the files may still be from this
+      # boot, so keep one whose PID is a live process named after the plugin.
+      if not other_boot and PluginProcessManager._pid_file_names_process(path, f[:-4]):
+        continue
+      try:
+        os.unlink(path)
+      except OSError:
+        pass
+    try:
+      with open(boot_id_file, 'w') as f:
+        f.write(boot_id)
+    except OSError:
+      cloudlog.exception("plugind: failed to write boot id")
+
+  @staticmethod
+  def _pid_file_names_process(pid_file: str, name: str) -> bool:
+    """Is the PID in pid_file a live process whose cmdline names the plugin?"""
+    try:
+      with open(pid_file) as f:
+        pid = int(f.read().strip())
+      with open(f'/proc/{pid}/cmdline') as f:
+        cmdline = f.read()
+    except (OSError, ValueError):
+      return False
+    return f'plugin_{name}' in cmdline or name in cmdline
 
   def _pid_file(self, name: str) -> str:
     return os.path.join(PID_DIR, f'{name}.pid')
@@ -108,15 +174,29 @@ class PluginProcessManager:
     """Check if required cereal services are available via shared memory.
 
     Args:
-      requires: dict with "services" list, or empty dict/list
+      requires: dict with "services" list, a list of service names, or empty
     """
     if not requires:
       return True
-    services = requires.get('services', [])
+    services = requires.get('services', []) if isinstance(requires, dict) else requires
     return all(os.path.exists(f'/dev/shm/msgq_{s}') for s in services)
 
-  def sync(self, desired: list[dict]):
-    """Start/stop processes to match desired state."""
+  @staticmethod
+  def _wanted(condition: str, started: bool | None) -> bool | None:
+    """Should a process with this condition run? None: onroad state unknown, leave it as it is."""
+    if condition == 'only_onroad':
+      return started
+    if condition == 'only_offroad':
+      return None if started is None else not started
+    return True
+
+  def sync(self, desired: list[dict], started: bool | None = None):
+    """Start/stop processes to match desired state.
+
+    started is deviceState.started, or None before deviceState is received. While
+    it is None, only_onroad/only_offroad processes are neither started nor stopped:
+    plugind may have restarted mid-drive and must not kill a running onroad process.
+    """
     desired_names = {p['name'] for p in desired}
 
     # Stop processes no longer needed
@@ -131,10 +211,21 @@ class PluginProcessManager:
           if name not in desired_names:
             self._stop(name)
 
-    # Start processes that aren't running (respecting required services)
+    # Start wanted processes that aren't running (respecting required services),
+    # stop running ones their condition excludes
     for proc_def in desired:
       name = proc_def['name']
-      if self._is_running(name) is not None:
+      wanted = self._wanted(proc_def.get('condition', 'always_run'), started)
+      if wanted is None:
+        continue
+
+      was_tracked = name in self._pids  # _is_running() forgets a process that is gone
+      running = self._is_running(name) is not None
+      if not wanted:
+        if running:
+          self._stop(name)
+        continue
+      if running:
         continue
 
       # Probe required cereal services before spawning
@@ -142,7 +233,7 @@ class PluginProcessManager:
       if not self._services_ready(requires):
         continue
 
-      if name in self._pids:
+      if was_tracked:
         cloudlog.warning(f"plugin process '{name}' died, restarting")
       self._start(proc_def)
 
@@ -235,6 +326,20 @@ def _kill_ui():
     cloudlog.exception("plugind: failed to kill UI process")
 
 
+def _update_check_loop(checker: UpdateChecker):
+  """Poll for ecosystem updates; check() rate-limits itself to its own interval.
+
+  Runs on its own thread: git fetch can block for tens of seconds on a bad link,
+  which must not hold up the main loop's process sync at an onroad transition.
+  """
+  while True:
+    try:
+      checker.check()
+    except Exception:
+      cloudlog.exception("plugind update check error")
+    time.sleep(POLL_INTERVAL)
+
+
 def main():
   cloudlog.info("plugind starting")
 
@@ -248,7 +353,8 @@ def main():
   # Load enabled plugins
   registry.load_enabled()
 
-  # Spawn standalone plugin processes
+  # Spawn standalone plugin processes. The onroad state is not known yet, so only
+  # unconditional ones start here; the loop handles the rest once deviceState arrives.
   standalone = registry.get_standalone_processes()
   if standalone:
     cloudlog.info(f"plugind spawning {len(standalone)} standalone processes: "
@@ -260,7 +366,7 @@ def main():
   _api_server = start_api_server()  # keep a reference; the server runs on its own thread
 
   # Ecosystem update checker (polls git remotes every 5 min)
-  update_checker = UpdateChecker()
+  threading.Thread(target=_update_check_loop, args=(UpdateChecker(),), daemon=True).start()
 
   # Subscribe to deviceState for onroad/offroad detection
   sm = messaging.SubMaster(['deviceState'])
@@ -268,38 +374,49 @@ def main():
   # Plugin bus publisher for aggregated health check results
   health_pub = PluginPub("plugin_health")
 
-  # Main loop: poll for config changes, health monitoring
+  # Main loop at 1 Hz: a full pass every POLL_INTERVAL seconds, and a process sync
+  # alone on any other tick where the onroad state changed.
   # Note: no finally/stop_all — plugin processes are independent (own process
   # group) and should survive plugind restarts. They die on reboot naturally.
-  rk = Ratekeeper(1.0 / POLL_INTERVAL, print_delay_threshold=None)
+  rk = Ratekeeper(1.0, print_delay_threshold=None)
+  last_full_pass = 0.0
+  prev_started = None
   while True:
     try:
       sm.update(0)
+      # None until deviceState is received, so offroad is never assumed
+      started = sm['deviceState'].started if sm.seen['deviceState'] else None
 
-      # Re-check enabled state (user may toggle via COD or Params)
-      registry.load_enabled()
+      if time.monotonic() - last_full_pass >= POLL_INTERVAL:
+        last_full_pass = time.monotonic()
 
-      # Sync standalone processes (restart crashed ones, stop disabled ones)
-      proc_mgr.sync(registry.get_standalone_processes())
+        # Re-check enabled state (user may toggle via COD)
+        registry.load_enabled()
 
-      # Check for ecosystem updates (plugins repo, COD, etc.)
-      update_checker.check()
+        # Sync standalone processes (restart crashed ones, stop disabled ones,
+        # apply onroad/offroad conditions)
+        proc_mgr.sync(registry.get_standalone_processes(), started)
 
-      # Call plugin health checks and publish aggregated result to plugin_bus
-      # bus_logger captures plugin_health topic into rlogs automatically
-      health = hooks.run('device.health_check', {}, sm=sm)
-      if health:
-        health_pub.send(health)
+        # Call plugin health checks and publish aggregated result to plugin_bus
+        # bus_logger captures plugin_health topic into rlogs automatically
+        health = hooks.run('device.health_check', {}, sm=sm)
+        if health:
+          health_pub.send(health)
 
-      # Handle restart marker (written by install.sh after plugin updates)
-      # Only restart when offroad (deviceState.started == False) for safety
-      # Wait until deviceState is actually received to avoid false offroad detection
-      if os.path.exists(RESTART_MARKER) and sm.seen['deviceState'] and not sm['deviceState'].started:
-        cloudlog.warning("plugind: restart marker detected, restarting plugin processes and UI")
-        os.unlink(RESTART_MARKER)
-        proc_mgr.stop_all()
-        # sync() will respawn with fresh code on next poll
-        _kill_ui()
+        # Handle restart marker (written by install.sh after plugin updates)
+        # Only restart when offroad (known, not assumed) for safety
+        if os.path.exists(RESTART_MARKER) and started is False:
+          cloudlog.warning("plugind: restart marker detected, restarting plugin processes and UI")
+          os.unlink(RESTART_MARKER)
+          proc_mgr.stop_all()
+          # sync() will respawn with fresh code on the next full pass
+          _kill_ui()
+
+      elif started != prev_started:
+        # Onroad/offroad transition: apply process conditions without waiting for the full pass
+        proc_mgr.sync(registry.get_standalone_processes(), started)
+
+      prev_started = started
     except Exception:
       cloudlog.exception("plugind poll error")
 

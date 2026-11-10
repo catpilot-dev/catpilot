@@ -1,5 +1,4 @@
 """Tests for the plugin hook system."""
-import pytest
 from openpilot.selfdrive.plugins.hooks import HookRegistry
 
 

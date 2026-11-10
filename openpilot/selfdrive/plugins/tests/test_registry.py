@@ -4,8 +4,8 @@ import os
 import sys
 
 import pytest
-from unittest.mock import patch, MagicMock
-from openpilot.selfdrive.plugins.registry import PluginRegistry, PluginInfo
+from unittest.mock import patch
+from openpilot.selfdrive.plugins.registry import PluginRegistry
 from openpilot.selfdrive.plugins.hooks import HookRegistry
 
 

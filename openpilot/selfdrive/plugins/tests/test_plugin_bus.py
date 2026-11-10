@@ -2,7 +2,6 @@
 import os
 import time
 import pytest
-import zmq
 
 from openpilot.selfdrive.plugins.plugin_bus import PluginPub, PluginSub, BUS_DIR
 

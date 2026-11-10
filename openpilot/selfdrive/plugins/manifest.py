@@ -9,7 +9,9 @@ Each plugin has a plugin.json manifest defining:
   - Conflicts: other plugin IDs that cannot coexist
   - Hook registrations: hook_name -> module.function
   - Params: configurable parameters exposed to UI
-  - Processes: daemon processes to run (with optional replace flag)
+  - Processes: daemons plugind spawns, each with name, module, condition
+    (always_run | only_onroad | only_offroad, default always_run) and
+    optional requires (cereal services that must exist before spawning)
 """
 import json
 import os
@@ -57,9 +59,6 @@ def load_manifest(plugin_dir: str) -> dict | None:
   if manifest['type'] not in VALID_TYPES:
     cloudlog.error(f"Plugin {manifest['id']} has invalid type: {manifest['type']}")
     return None
-
-  # Add plugin_dir to manifest for later use
-  manifest['_plugin_dir'] = plugin_dir
 
   return manifest
 
@@ -124,10 +123,3 @@ def check_conflicts(manifest: dict, loaded_plugin_ids: set[str]) -> tuple[bool, 
       return False, f"conflicts with loaded plugin '{conflict_id}'"
   return True, ""
 
-
-def get_plugin_params(manifest: dict) -> dict:
-  """Extract configurable params from manifest.
-
-  Returns {param_name: {type, default, label, ...}}
-  """
-  return manifest.get('params', {})

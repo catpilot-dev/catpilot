@@ -1,10 +1,9 @@
-"""Tests for lazy per-process plugin loading and conflict detection."""
+"""Tests for lazy per-process plugin loading, dependency/conflict checks and process listing."""
 import json
 import os
 
-import pytest
 from unittest.mock import patch, MagicMock
-from openpilot.selfdrive.plugins.hooks import HookRegistry, EXCLUSIVE_HOOKS
+from openpilot.selfdrive.plugins.hooks import HookRegistry
 
 
 class TestLazyLoading:
@@ -53,7 +52,7 @@ class TestLazyLoading:
     assert result == 1
 
 
-class TestConflictDetection:
+class TestMultipleRegistrants:
   """Verify that multiple hooks on the same point work correctly."""
 
   def test_multiple_hooks_allowed(self):
@@ -66,11 +65,6 @@ class TestConflictDetection:
     # Both should be registered
     registered = hooks.get_registered_hooks()
     assert len(registered['controls.curvature_correction']) == 2
-    assert hooks.get_conflicts() == {}
-
-  def test_no_exclusive_hooks(self):
-    """Car interface registration uses monkey-patching, not hooks."""
-    assert len(EXCLUSIVE_HOOKS) == 0
 
 
 class TestDependencyChecking:
@@ -229,32 +223,64 @@ class TestRegistryDependencyOrdering:
     finally:
       hooks_module.hooks = original_hooks
 
+  @patch('openpilot.selfdrive.plugins.registry.PluginRegistry.is_enabled', return_value=True)
+  def test_unmet_dependency_keeps_error_after_load_enabled(self, mock_enabled, tmp_path):
+    """load_enabled() must leave the dependency reason in place for get_status()."""
+    from openpilot.selfdrive.plugins.registry import PluginRegistry
+    from openpilot.selfdrive.plugins import hooks as hooks_module
+    original_hooks = hooks_module.hooks
+    hooks_module.hooks = HookRegistry()
+    hooks_module.hooks._loaded = True
 
-class TestProcessOverrides:
-  """Verify process replacement map generation."""
+    try:
+      plugin_dir = tmp_path / 'dependent'
+      plugin_dir.mkdir()
+      (plugin_dir / 'plugin.json').write_text(json.dumps({
+        'id': 'dependent', 'name': 'Dependent Plugin', 'version': '1.0.0', 'type': 'hook',
+        'dependencies': ['missing-plugin'], 'hooks': {}
+      }))
 
-  def test_get_process_overrides_empty(self, tmp_path):
+      registry = PluginRegistry(str(tmp_path))
+      registry.discover()
+      registry.load_enabled()
+      info = registry.plugins['dependent']
+      assert not info.loaded
+      assert info.error is not None and 'Dependency' in info.error
+    finally:
+      hooks_module.hooks = original_hooks
+
+
+class TestStandaloneProcesses:
+  """Verify the process list plugind supervises."""
+
+  def test_empty(self, tmp_path):
     from openpilot.selfdrive.plugins.registry import PluginRegistry
     registry = PluginRegistry(str(tmp_path))
-    assert registry.get_process_overrides() == {}
+    assert registry.get_standalone_processes() == []
 
-  def test_get_process_overrides_with_replacement(self, tmp_path):
+  def test_every_declared_process_is_returned(self, tmp_path):
     from openpilot.selfdrive.plugins.registry import PluginRegistry, PluginInfo
     registry = PluginRegistry(str(tmp_path))
 
-    # Simulate a loaded process plugin
     manifest = {
-      'id': 'c3-raylib-ui',
-      'name': 'UI',
+      'id': 'speedlimitd',
+      'name': 'Speed Limit',
       'version': '1.0.0',
-      'type': 'process',
-      'processes': [{'name': 'ui', 'module': 'ui.ui', 'condition': 'always_run', 'replace': True}]
+      'type': 'hybrid',
+      'processes': [
+        {'name': 'speedlimitd', 'module': 'speedlimitd', 'condition': 'only_onroad',
+         'requires': {'services': ['carState']}},
+        {'name': 'helper', 'module': 'helper', 'replace': True},
+      ]
     }
     info = PluginInfo(manifest, str(tmp_path))
     info.loaded = True
-    registry.plugins['c3-raylib-ui'] = info
+    registry.plugins['speedlimitd'] = info
 
-    overrides = registry.get_process_overrides()
-    assert 'ui' in overrides
-    assert overrides['ui']['module'] == 'ui.ui'
-    assert overrides['ui']['plugin_id'] == 'c3-raylib-ui'
+    procs = {p['name']: p for p in registry.get_standalone_processes()}
+    assert set(procs) == {'speedlimitd', 'helper'}
+    assert procs['speedlimitd']['condition'] == 'only_onroad'
+    assert procs['speedlimitd']['requires'] == {'services': ['carState']}
+    assert procs['helper']['condition'] == 'always_run'
+    assert procs['helper']['requires'] == []
+    assert procs['helper']['plugin_dir'] == str(tmp_path)

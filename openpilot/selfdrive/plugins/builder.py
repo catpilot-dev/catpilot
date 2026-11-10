@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 from collections import namedtuple
 
 from openpilot.common.basedir import BASEDIR
@@ -21,8 +20,6 @@ CEREAL_DIR = os.path.join(BASEDIR, 'openpilot', 'cereal')
 CUSTOM_CAPNP = os.path.join(CEREAL_DIR, 'custom.capnp')
 LOG_CAPNP = os.path.join(CEREAL_DIR, 'log.capnp')
 SERVICES_PY = os.path.join(CEREAL_DIR, 'services.py')
-# repo-relative paths of the files the builder patches (restore_stock checks them out of git)
-STOCK_CEREAL_FILES = ('openpilot/cereal/custom.capnp', 'openpilot/cereal/log.capnp', 'openpilot/cereal/services.py')
 
 BUILD_HASH_FILE = '/tmp/plugin_build_hash'
 PLUGINS_DIR = '/data/plugins-runtime'
@@ -63,8 +60,16 @@ def _load_manifest(plugin_dir: str) -> dict:
   manifest_path = os.path.join(plugin_dir, 'plugin.json')
   if not os.path.exists(manifest_path):
     return {}
-  with open(manifest_path) as f:
-    return json.load(f)
+  try:
+    with open(manifest_path) as f:
+      manifest = json.load(f)
+  except (json.JSONDecodeError, OSError) as e:
+    cloudlog.warning(f"plugin builder: skipping {plugin_dir}, unreadable plugin.json: {e}")
+    return {}
+  if not isinstance(manifest, dict):
+    cloudlog.warning(f"plugin builder: skipping {plugin_dir}, plugin.json is not an object")
+    return {}
+  return manifest
 
 
 def _get_enabled_plugins() -> list[str]:
@@ -340,31 +345,3 @@ def build() -> None:
 
   cloudlog.info("plugin builder: rebuild complete")
 
-
-def restore_stock() -> None:
-  """Restore patched files to their stock upstream state.
-
-  Finds the earliest commit that touched each file (the upstream base).
-  """
-  for rel_path in STOCK_CEREAL_FILES:
-    try:
-      # Find the first commit that introduced this file (upstream base)
-      result = subprocess.run(
-        ['git', 'log', '--reverse', '--format=%H', '--diff-filter=A', '--', rel_path],
-        capture_output=True, text=True, cwd=BASEDIR
-      )
-      base_ref = result.stdout.strip().split('\n')[0] if result.returncode == 0 and result.stdout.strip() else 'HEAD'
-      subprocess.run(
-        ['git', 'checkout', base_ref, '--', rel_path],
-        cwd=BASEDIR, check=True
-      )
-    except (subprocess.CalledProcessError, IndexError):
-      cloudlog.warning(f"plugin builder: failed to restore {rel_path}")
-
-  # Clean up build artifacts
-  try:
-    os.remove(BUILD_HASH_FILE)
-  except FileNotFoundError:
-    pass
-
-  cloudlog.info("plugin builder: restored stock files")

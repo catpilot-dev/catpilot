@@ -1,7 +1,8 @@
 """Ecosystem update checker — polls git remotes for available updates.
 
-Checks plugins repo, COD, models, and mapd for newer versions.
-Results written to /data/plugins-runtime/.updates.json for the UI.
+Checks each git checkout in REPOS (currently the plugins repo) for upstream
+commits not yet pulled. Results written to /data/plugins-runtime/.updates.json
+as {"updates": {name: bool}, "last_check": ...} for the UI.
 Runs inside plugind at a low frequency (every 5 minutes).
 """
 import json
@@ -17,7 +18,6 @@ CHECK_INTERVAL = 300  # 5 minutes
 # Repos to check for updates
 REPOS = {
   'plugins': '/data/plugins',
-  'cod': '/data/connect-on-device',
 }
 
 
@@ -55,22 +55,6 @@ def _git_has_updates(repo_path: str) -> bool:
     return False
 
 
-def _check_mapd_update() -> bool:
-  """Check if mapd binary has an update available.
-
-  Placeholder — mapd versioning TBD.
-  """
-  return False
-
-
-def _check_model_updates() -> bool:
-  """Check if driving models have updates available.
-
-  Placeholder — model versioning TBD.
-  """
-  return False
-
-
 class UpdateChecker:
   def __init__(self):
     self.last_check: float = 0
@@ -106,34 +90,20 @@ class UpdateChecker:
 
     cloudlog.info("update_checker: checking for updates")
 
+    # Rebuilt from REPOS so keys no longer checked drop out of the cached file
+    updates = {}
     for name, repo_path in REPOS.items():
       try:
-        self.updates[name] = _git_has_updates(repo_path)
+        updates[name] = _git_has_updates(repo_path)
       except Exception:
+        updates[name] = self.updates.get(name, False)
         cloudlog.exception(f"update_checker: error checking {name}")
-
-    try:
-      self.updates['mapd'] = _check_mapd_update()
-    except Exception:
-      pass
-
-    try:
-      self.updates['models'] = _check_model_updates()
-    except Exception:
-      pass
+    self.updates = updates
 
     self._save()
     available = [k for k, v in self.updates.items() if v]
     if available:
       cloudlog.info(f"update_checker: updates available: {available}")
-
-  @property
-  def update_count(self) -> int:
-    return sum(1 for v in self.updates.values() if v)
-
-  @property
-  def has_updates(self) -> bool:
-    return self.update_count > 0
 
 
 def get_update_status() -> dict[str, bool]:

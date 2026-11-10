@@ -4,7 +4,7 @@ import os
 import pytest
 import sys
 import time
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
 @pytest.fixture(autouse=True)
@@ -104,8 +104,6 @@ class TestUpdateChecker:
     with patch.object(uc_module, 'UPDATES_FILE', str(tmp_path / 'updates.json')):
       checker = uc_module.UpdateChecker()
       assert checker.updates == {}
-      assert checker.update_count == 0
-      assert checker.has_updates is False
 
   def test_load_cached_state(self, uc_module, tmp_path):
     updates_file = tmp_path / 'updates.json'
@@ -117,8 +115,6 @@ class TestUpdateChecker:
     with patch.object(uc_module, 'UPDATES_FILE', str(updates_file)):
       checker = uc_module.UpdateChecker()
       assert checker.updates == {'plugins': True, 'cod': False}
-      assert checker.update_count == 1
-      assert checker.has_updates is True
 
   def test_load_corrupted_json(self, uc_module, tmp_path):
     updates_file = tmp_path / 'updates.json'
@@ -167,9 +163,22 @@ class TestUpdateChecker:
       checker.check()
 
     saved = json.loads(updates_file.read_text())
-    assert saved['updates']['plugins'] is True
-    assert saved['updates']['cod'] is True
+    assert saved['updates'] == {'plugins': True}
     assert 'last_check' in saved
+
+  def test_check_drops_keys_not_in_repos(self, uc_module, tmp_path):
+    updates_file = tmp_path / 'updates.json'
+    updates_file.write_text(json.dumps({
+      'updates': {'plugins': True, 'cod': True, 'mapd': True, 'models': True},
+      'last_check': time.time(),
+    }))
+    with patch.object(uc_module, 'UPDATES_FILE', str(updates_file)), \
+         patch.object(uc_module, '_git_has_updates', return_value=False):
+      checker = uc_module.UpdateChecker()
+      checker.check()
+      assert checker.updates == {'plugins': False}
+
+    assert json.loads(updates_file.read_text())['updates'] == {'plugins': False}
 
   def test_check_handles_git_exception(self, uc_module, tmp_path):
     updates_file = str(tmp_path / 'updates.json')
@@ -178,22 +187,8 @@ class TestUpdateChecker:
       checker = uc_module.UpdateChecker()
       # Should not raise
       checker.check()
-      # updates may be empty or partial, but no crash
-      assert isinstance(checker.updates, dict)
-
-  def test_update_count_mixed(self, uc_module, tmp_path):
-    with patch.object(uc_module, 'UPDATES_FILE', str(tmp_path / 'updates.json')):
-      checker = uc_module.UpdateChecker()
-      checker.updates = {'plugins': True, 'cod': False, 'mapd': True, 'models': False}
-      assert checker.update_count == 2
-      assert checker.has_updates is True
-
-  def test_update_count_none(self, uc_module, tmp_path):
-    with patch.object(uc_module, 'UPDATES_FILE', str(tmp_path / 'updates.json')):
-      checker = uc_module.UpdateChecker()
-      checker.updates = {'plugins': False, 'cod': False}
-      assert checker.update_count == 0
-      assert checker.has_updates is False
+      # a failed check keeps the previous value (none cached here)
+      assert checker.updates == {'plugins': False}
 
 
 # ============================================================
@@ -220,14 +215,3 @@ class TestGetUpdateStatus:
     with patch.object(uc_module, 'UPDATES_FILE', str(updates_file)):
       assert uc_module.get_update_status() == {}
 
-
-# ============================================================
-# Placeholder checks
-# ============================================================
-
-class TestPlaceholders:
-  def test_mapd_always_false(self, uc_module):
-    assert uc_module._check_mapd_update() is False
-
-  def test_models_always_false(self, uc_module):
-    assert uc_module._check_model_updates() is False

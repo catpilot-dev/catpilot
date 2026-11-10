@@ -86,8 +86,12 @@ def manager_init() -> None:
                        device=HARDWARE.get_device_type())
 
   # build plugin schemas and services before any process imports cereal
-  from openpilot.selfdrive.plugins.builder import build
-  build()
+  # fail-safe: a plugin error must never keep the manager from starting
+  try:
+    from openpilot.selfdrive.plugins.builder import build
+    build()
+  except Exception:
+    cloudlog.exception("plugin builder failed, starting without plugin schemas")
 
 
 def manager_cleanup() -> None:
