@@ -121,7 +121,7 @@ are left as they are. An onroad/offroad transition reaches them within about a s
 
 ## Where the call sites are
 
-19 hooks. 18 are dispatched from 12 upstream files; `device.health_check` is dispatched
+20 hooks. 19 are dispatched from 12 upstream files; `device.health_check` is dispatched
 by plugind, catpilot's own daemon. Grouped by where they sit in openpilot's flow;
 signatures and current consumers are in the plugins repo's
 [`HOOK_INTEGRATION_POINTS.md`](https://github.com/catpilot-dev/plugins/blob/main/docs/HOOK_INTEGRATION_POINTS.md).
@@ -134,6 +134,7 @@ signatures and current consumers are in the plugins repo's
 | `controls.curvature_correction` | `controlsd.py` | Every frame, on the model's curvature before it reaches the lateral controller |
 | `controls.post_actuators` | `controlsd.py` | Every frame, after actuators are computed — read-only observation point |
 | `planner.v_cruise` | `lib/longitudinal_planner.py` | Every planner cycle, on target cruise speed — runs before the force-decel override |
+| `planner.e2e_accel` | `lib/longitudinal_planner.py` | Experimental mode only, after `accel_boost`, on the e2e acceleration candidate before it competes with the MPC and cruise candidates — a non-finite or non-numeric result is discarded |
 
 ### Car and device
 

@@ -146,6 +146,14 @@ class LongitudinalPlanner:
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]
     if sm['selfdriveState'].experimentalMode:
+      # catpilot hook: a plugin may adjust the e2e acceleration ask. A non-finite or non-numeric result is discarded.
+      hooked = hooks.run('planner.e2e_accel', output_a_target_e2e, v_ego, v_cruise, self.a_cruise, sm)
+      try:
+        hooked = float(hooked)
+        if math.isfinite(hooked):
+          output_a_target_e2e = hooked
+      except (TypeError, ValueError):
+        pass
       candidates.append((output_a_target_e2e, LongitudinalPlanSource.e2e, output_should_stop_e2e))
 
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
