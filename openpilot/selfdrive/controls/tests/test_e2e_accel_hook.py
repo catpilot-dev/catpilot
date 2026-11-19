@@ -82,3 +82,26 @@ def test_hook_nonfinite_passthrough(bad):
   base = run_planner().output_a_target
   register(lambda *a: bad)
   assert run_planner().output_a_target == base
+
+
+@pytest.mark.parametrize('a_model', [0.3, -0.4])
+def test_hook_sees_raw_model_ask_after_gas_overrides(a_model):
+  """No gas-override boost (upstream #39306): after model-limited gas presses the
+  e2e candidate is still the model's own ask, accelerating or braking."""
+  seen = []
+  register(lambda a_e2e, *rest: seen.append(a_e2e) or a_e2e)
+  CP = car.CarParams.new_message(openpilotLongitudinalControl=True, steerRatio=15.0, wheelbase=2.7,
+                                 longitudinalActuatorDelay=0.2)
+  planner = LongitudinalPlanner(CP, init_v=V_EGO, init_a=0.0)
+  sm = make_sm(V_EGO, V_CRUISE)
+  sm['selfdriveState'].experimentalMode = True
+  sm['selfdriveState'].enabled = True
+  sm['modelV2'].action.desiredAcceleration = -2.0   # model-limited: far below cruise/MPC
+  for gas in [False, True] * 40 + [False] * 5:       # 40 gas overrides
+    sm['carState'].gasPressed = gas
+    planner.update(sm)
+  sm['carState'].gasPressed = False
+  sm['modelV2'].action.desiredAcceleration = a_model
+  seen.clear()
+  planner.update(sm)
+  assert seen == [pytest.approx(a_model, abs=1e-6)]   # capnp float32; the boost would add >= 0.05
